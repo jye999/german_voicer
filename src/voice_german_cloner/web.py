@@ -4,7 +4,7 @@ import itertools
 from pathlib import Path
 from typing import Callable
 
-from flask import Flask, jsonify, render_template_string, request, send_from_directory
+from flask import Flask, jsonify, make_response, render_template_string, request, send_from_directory
 from werkzeug.utils import secure_filename
 
 from .core import synthesize_german_voice, translate_english_to_german
@@ -37,16 +37,33 @@ INDEX_HTML = """
     #status { min-height: 24px; }
     .sample-read { margin-top: 14px; padding: 12px 14px; border-left: 3px solid #4b5563; background: #0f172a; border-radius: 0 10px 10px 0; font-size: 15px; line-height: 1.55; color: #d1d5db; }
     .sample-read strong { color: #e5e7eb; }
+    .upload-box { margin-top: 8px; padding: 16px; border: 2px dashed #60a5fa; border-radius: 14px; background: #111827; }
+    .upload-box h3 { margin: 0 0 10px; font-size: 1.05rem; color: #f9fafb; }
+    .upload-box .hint { margin: 0 0 12px; font-size: 14px; color: #9ca3af; }
+    #voiceFile { display: block; width: 100%; max-width: 100%; padding: 8px 0; font-size: 15px; color: #e5e7eb; }
+    #voiceFile::file-selector-button,
+    #voiceFile::-webkit-file-upload-button {
+      background: #60a5fa; color: #082f49; border: 0; border-radius: 999px; padding: 10px 20px; font-weight: 700; cursor: pointer; margin-right: 14px;
+    }
   </style>
 </head>
 <body>
 <main>
   <h1>English → German in Your Voice</h1>
-  <p class="muted">Record your voice, enter English text, then generate German speech that mimics your recording.</p>
+  <p class="muted">Record or upload a voice sample, enter English text, then generate German speech that mimics it.</p>
 
   <section class="card">
-    <h2>1. Record my voice</h2>
-    <p class="muted">Record 10–30 seconds in a quiet room. You can play it back before generating.</p>
+    <h2>1. Voice sample</h2>
+    <p class="muted">Use an uploaded file <strong>or</strong> a browser recording (10–30 seconds, clean audio).</p>
+
+    <div class="upload-box">
+      <h3>Upload reference audio</h3>
+      <p class="hint">Pick a <strong>WAV</strong> or <strong>MP3</strong> of your voice (same idea as the recording below). Works without microphone access.</p>
+      <input id="voiceFile" type="file" accept=".wav,.mp3,audio/wav,audio/wave,audio/x-wav,audio/mpeg,audio/mp3">
+      <audio id="uploadPlayback" controls class="hidden"></audio>
+    </div>
+
+    <p class="muted" style="margin-top: 22px;"><strong>Or record in the browser</strong> (needs localhost or HTTPS for the mic).</p>
     <p class="sample-read"><strong>Suggested script (read aloud in your normal voice):</strong>
     Last Thursday morning, I walked through our quiet neighborhood while the weather shifted from thick fog to bright sunshine. A neighbor waved, juggling books and a thermos, and we chatted briefly about travel plans for the spring. Birds were surprisingly loud down by the river path, and I remember thinking how peaceful it felt to rush nowhere in particular.</p>
     <button id="record" class="secondary" type="button">Start recording</button>
@@ -72,11 +89,15 @@ INDEX_HTML = """
 <script>
 let recorder;
 let chunks = [];
-let voiceBlob;
+/** @type {{ blob: Blob, filename: string } | null} */
+let voiceForSubmit = null;
+let uploadObjectUrl = null;
 
 const recordButton = document.getElementById('record');
 const stopButton = document.getElementById('stop');
 const recordingPlayback = document.getElementById('recordingPlayback');
+const voiceFileInput = document.getElementById('voiceFile');
+const uploadPlayback = document.getElementById('uploadPlayback');
 const statusEl = document.getElementById('status');
 const form = document.getElementById('generateForm');
 const result = document.getElementById('result');
@@ -120,8 +141,15 @@ recordButton.addEventListener('click', async () => {
     recorder = new MediaRecorder(stream);
     recorder.ondataavailable = event => chunks.push(event.data);
     recorder.onstop = () => {
-      voiceBlob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
-      recordingPlayback.src = URL.createObjectURL(voiceBlob);
+      const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+      voiceForSubmit = { blob, filename: 'recording.webm' };
+      voiceFileInput.value = '';
+      if (uploadObjectUrl) {
+        URL.revokeObjectURL(uploadObjectUrl);
+        uploadObjectUrl = null;
+      }
+      uploadPlayback.classList.add('hidden');
+      recordingPlayback.src = URL.createObjectURL(blob);
       recordingPlayback.classList.remove('hidden');
       stream.getTracks().forEach(track => track.stop());
       statusEl.textContent = 'Recording ready. Enter text and generate.';
@@ -141,16 +169,36 @@ stopButton.addEventListener('click', () => {
   stopButton.disabled = true;
 });
 
+voiceFileInput.addEventListener('change', () => {
+  const file = voiceFileInput.files && voiceFileInput.files[0];
+  if (!file) return;
+  const lower = file.name.toLowerCase();
+  if (!lower.endsWith('.wav') && !lower.endsWith('.mp3')) {
+    statusEl.textContent = 'Please choose a .wav or .mp3 file.';
+    voiceFileInput.value = '';
+    return;
+  }
+  voiceForSubmit = { blob: file, filename: file.name };
+  if (uploadObjectUrl) URL.revokeObjectURL(uploadObjectUrl);
+  uploadObjectUrl = URL.createObjectURL(file);
+  uploadPlayback.src = uploadObjectUrl;
+  uploadPlayback.classList.remove('hidden');
+  recordingPlayback.pause();
+  recordingPlayback.removeAttribute('src');
+  recordingPlayback.classList.add('hidden');
+  statusEl.textContent = 'Using uploaded file: ' + file.name;
+});
+
 form.addEventListener('submit', async event => {
   event.preventDefault();
-  if (!voiceBlob) {
-    statusEl.textContent = 'Record your voice first.';
+  if (!voiceForSubmit) {
+    statusEl.textContent = 'Record your voice or upload a WAV/MP3 file first.';
     return;
   }
 
   const data = new FormData();
   data.append('text', document.getElementById('text').value);
-  data.append('voice', voiceBlob, 'recording.webm');
+  data.append('voice', voiceForSubmit.blob, voiceForSubmit.filename);
 
   statusEl.textContent = 'Translating and generating audio. First run can take several minutes while the model downloads...';
   result.classList.add('hidden');
@@ -188,7 +236,9 @@ def create_app(
 
     @app.get("/")
     def index():
-        return render_template_string(INDEX_HTML)
+        resp = make_response(render_template_string(INDEX_HTML))
+        resp.headers["Cache-Control"] = "no-store, max-age=0, must-revalidate"
+        return resp
 
     @app.post("/generate")
     def generate():
