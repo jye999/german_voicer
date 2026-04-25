@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voice-german-cloner"
+version = "0.1.0"
+description = "Translate English text to German and speak it using a cloned reference voice."
+requires-python = ">=3.10,<3.12"
+dependencies = [
+  "deep-translator>=1.11.4",
+  "TTS>=0.22.0",
+  "soundfile>=0.12.1",
+  "Flask>=3.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[project.scripts]
+voice-german-cloner = "voice_german_cloner.__main__:main"
+voice-german-web = "voice_german_cloner.web:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

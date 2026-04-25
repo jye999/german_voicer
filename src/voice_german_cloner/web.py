@@ -1,0 +1,234 @@
+from __future__ import annotations
+
+import itertools
+from pathlib import Path
+from typing import Callable
+
+from flask import Flask, jsonify, render_template_string, request, send_from_directory
+from werkzeug.utils import secure_filename
+
+from .core import synthesize_german_voice, translate_english_to_german
+
+Translator = Callable[[str], str]
+Synthesizer = Callable[[str, Path, Path], None]
+
+INDEX_HTML = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>German Voice Cloner</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, -apple-system, sans-serif; }
+    body { margin: 0; min-height: 100vh; background: #111827; color: #f9fafb; display: grid; place-items: center; }
+    main { width: min(760px, calc(100% - 32px)); background: #1f2937; border: 1px solid #374151; border-radius: 18px; padding: 28px; box-shadow: 0 20px 60px #0008; }
+    h1 { margin-top: 0; }
+    label { display: block; margin: 18px 0 8px; font-weight: 700; }
+    textarea { width: 100%; min-height: 130px; border-radius: 12px; border: 1px solid #4b5563; background: #111827; color: #f9fafb; padding: 12px; font-size: 16px; box-sizing: border-box; }
+    button { border: 0; border-radius: 999px; padding: 12px 18px; margin: 8px 8px 8px 0; font-weight: 700; cursor: pointer; }
+    .primary { background: #22c55e; color: #052e16; }
+    .secondary { background: #60a5fa; color: #082f49; }
+    .danger { background: #f87171; color: #450a0a; }
+    .muted { color: #9ca3af; }
+    audio { width: 100%; margin-top: 10px; }
+    .card { margin-top: 18px; padding: 16px; background: #111827; border-radius: 12px; border: 1px solid #374151; }
+    .hidden { display: none; }
+    #status { min-height: 24px; }
+    .sample-read { margin-top: 14px; padding: 12px 14px; border-left: 3px solid #4b5563; background: #0f172a; border-radius: 0 10px 10px 0; font-size: 15px; line-height: 1.55; color: #d1d5db; }
+    .sample-read strong { color: #e5e7eb; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>English → German in Your Voice</h1>
+  <p class="muted">Record your voice, enter English text, then generate German speech that mimics your recording.</p>
+
+  <section class="card">
+    <h2>1. Record my voice</h2>
+    <p class="muted">Record 10–30 seconds in a quiet room. You can play it back before generating.</p>
+    <p class="sample-read"><strong>Suggested script (read aloud in your normal voice):</strong>
+    Last Thursday morning, I walked through our quiet neighborhood while the weather shifted from thick fog to bright sunshine. A neighbor waved, juggling books and a thermos, and we chatted briefly about travel plans for the spring. Birds were surprisingly loud down by the river path, and I remember thinking how peaceful it felt to rush nowhere in particular.</p>
+    <button id="record" class="secondary" type="button">Start recording</button>
+    <button id="stop" class="danger" type="button" disabled>Stop recording</button>
+    <audio id="recordingPlayback" controls class="hidden"></audio>
+  </section>
+
+  <form id="generateForm" class="card">
+    <h2>2. Enter English text</h2>
+    <label for="text">English text</label>
+    <textarea id="text" name="text" placeholder="Good morning, how are you?" required></textarea>
+    <button class="primary" type="submit">Generate German Voice</button>
+  </form>
+
+  <section id="result" class="card hidden">
+    <h2>Result</h2>
+    <p><strong>German:</strong> <span id="german"></span></p>
+    <audio id="germanPlayback" controls></audio>
+  </section>
+
+  <p id="status" class="muted"></p>
+</main>
+<script>
+let recorder;
+let chunks = [];
+let voiceBlob;
+
+const recordButton = document.getElementById('record');
+const stopButton = document.getElementById('stop');
+const recordingPlayback = document.getElementById('recordingPlayback');
+const statusEl = document.getElementById('status');
+const form = document.getElementById('generateForm');
+const result = document.getElementById('result');
+const german = document.getElementById('german');
+const germanPlayback = document.getElementById('germanPlayback');
+
+/** getUserMedia is only exposed on secure contexts; plain http:// + LAN hostname leaves mediaDevices undefined. */
+function getMicStream() {
+  const constraints = { audio: true };
+  if (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function') {
+    return navigator.mediaDevices.getUserMedia(constraints);
+  }
+  const legacy =
+    navigator.getUserMedia ||
+    navigator.webkitGetUserMedia ||
+    navigator.mozGetUserMedia ||
+    navigator.msGetUserMedia;
+  if (typeof legacy === 'function') {
+    return new Promise((resolve, reject) => {
+      legacy.call(navigator, constraints, resolve, reject);
+    });
+  }
+  return Promise.reject(
+    new Error(
+      'This page is not a secure context, so the browser hides the microphone API. ' +
+        'Open http://127.0.0.1:7860 or http://localhost:7860 on the machine running the server, ' +
+        'or serve the app over HTTPS.',
+    ),
+  );
+}
+
+if (!window.isSecureContext && location.hostname !== '127.0.0.1' && location.hostname !== 'localhost') {
+  statusEl.textContent =
+    "Tip: For browser recording, use http://127.0.0.1:7860 (or HTTPS). Plain HTTP to this machine's LAN IP usually blocks the microphone.";
+}
+
+recordButton.addEventListener('click', async () => {
+  try {
+    const stream = await getMicStream();
+    chunks = [];
+    recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = event => chunks.push(event.data);
+    recorder.onstop = () => {
+      voiceBlob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+      recordingPlayback.src = URL.createObjectURL(voiceBlob);
+      recordingPlayback.classList.remove('hidden');
+      stream.getTracks().forEach(track => track.stop());
+      statusEl.textContent = 'Recording ready. Enter text and generate.';
+    };
+    recorder.start();
+    recordButton.disabled = true;
+    stopButton.disabled = false;
+    statusEl.textContent = 'Recording...';
+  } catch (error) {
+    statusEl.textContent = 'Microphone access failed: ' + error.message;
+  }
+});
+
+stopButton.addEventListener('click', () => {
+  if (recorder && recorder.state !== 'inactive') recorder.stop();
+  recordButton.disabled = false;
+  stopButton.disabled = true;
+});
+
+form.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!voiceBlob) {
+    statusEl.textContent = 'Record your voice first.';
+    return;
+  }
+
+  const data = new FormData();
+  data.append('text', document.getElementById('text').value);
+  data.append('voice', voiceBlob, 'recording.webm');
+
+  statusEl.textContent = 'Translating and generating audio. First run can take several minutes while the model downloads...';
+  result.classList.add('hidden');
+
+  try {
+    const response = await fetch('/generate', { method: 'POST', body: data });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Generation failed');
+    german.textContent = payload.german;
+    germanPlayback.src = payload.audio_url + '?t=' + Date.now();
+    result.classList.remove('hidden');
+    statusEl.textContent = 'Done.';
+  } catch (error) {
+    statusEl.textContent = error.message;
+  }
+});
+</script>
+</body>
+</html>
+"""
+
+
+def create_app(
+    output_dir: Path | str = "outputs",
+    sample_dir: Path | str = "voice_samples",
+    translator: Translator = translate_english_to_german,
+    synthesizer: Synthesizer = synthesize_german_voice,
+) -> Flask:
+    app = Flask(__name__)
+    output_path = Path(output_dir)
+    sample_path = Path(sample_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    sample_path.mkdir(parents=True, exist_ok=True)
+    counter = itertools.count(1)
+
+    @app.get("/")
+    def index():
+        return render_template_string(INDEX_HTML)
+
+    @app.post("/generate")
+    def generate():
+        english = request.form.get("text", "").strip()
+        voice = request.files.get("voice")
+
+        if not english:
+            return jsonify(error="English text is required."), 400
+        if voice is None or voice.filename == "":
+            return jsonify(error="A recorded voice file is required."), 400
+
+        extension = Path(secure_filename(voice.filename)).suffix or ".webm"
+        number = next(counter)
+        speaker_file = sample_path / f"recording_{number:03d}{extension}"
+        output_file = output_path / f"german_voice_{number:03d}.wav"
+        voice.save(speaker_file)
+
+        try:
+            german_text = translator(english)
+            synthesizer(german_text, speaker_file, output_file)
+        except Exception as exc:  # noqa: BLE001 - display error to local user
+            return jsonify(error=str(exc)), 500
+
+        return jsonify(
+            english=english,
+            german=german_text,
+            audio_url=f"/outputs/{output_file.name}",
+        )
+
+    @app.get("/outputs/<path:filename>")
+    def output_file(filename: str):
+        return send_from_directory(output_path, filename, as_attachment=False)
+
+    return app
+
+
+def main() -> None:
+    app = create_app()
+    app.run(host="0.0.0.0", port=7860, debug=True)
+
+
+if __name__ == "__main__":
+    main()

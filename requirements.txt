@@ -1,0 +1,5 @@
+deep-translator>=1.11.4
+TTS>=0.22.0
+soundfile>=0.12.1
+Flask>=3.0.0
+pytest>=8.0.0

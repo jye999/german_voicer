@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+uv.lock
+outputs/*.wav
+outputs/*.mp3
+voice_samples/*
+!voice_samples/.gitkeep
