@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import itertools
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from flask import Flask, jsonify, make_response, render_template_string, request, send_from_directory
 from werkzeug.utils import secure_filename
@@ -10,7 +10,7 @@ from werkzeug.utils import secure_filename
 from .core import synthesize_german_voice, translate_english_to_german
 
 Translator = Callable[[str], str]
-Synthesizer = Callable[[str, Path, Path], None]
+Synthesizer = Callable[..., Any]
 
 INDEX_HTML = """
 <!doctype html>
@@ -49,22 +49,22 @@ INDEX_HTML = """
 </head>
 <body>
 <main>
-  <h1>English → German in Your Voice</h1>
-  <p class="muted">Record or upload a voice sample, enter English text, then generate German speech that mimics it.</p>
+  <h1>English → German in your voice</h1>
+  <p class="muted">Local English→German translation, then <strong><a href="https://github.com/QwenLM/Qwen3-TTS" style="color:#93c5fd;">Qwen3-TTS</a> Base</strong> voice clone. Optional: paste a transcript of your reference clip or use auto-transcribe (Whisper) for stronger ICL cloning. Without that, only the speaker embedding is used. GPU recommended.</p>
 
   <section class="card">
-    <h2>1. Voice sample</h2>
-    <p class="muted">Use an uploaded file <strong>or</strong> a browser recording (10–30 seconds, clean audio).</p>
+    <h2>1. Voice sample (required)</h2>
+    <p class="muted">About 10–30 seconds, clean speech, no music. Upload <strong>or</strong> record in the browser.</p>
 
     <div class="upload-box">
       <h3>Upload reference audio</h3>
-      <p class="hint">Pick a <strong>WAV</strong> or <strong>MP3</strong> of your voice (same idea as the recording below). Works without microphone access.</p>
-      <input id="voiceFile" type="file" accept=".wav,.mp3,audio/wav,audio/wave,audio/x-wav,audio/mpeg,audio/mp3">
+      <p class="hint"><strong>WAV</strong>, <strong>MP3</strong>, or <strong>M4A</strong> of your voice.</p>
+      <input id="voiceFile" type="file" accept=".wav,.mp3,.m4a,audio/wav,audio/wave,audio/x-wav,audio/mpeg,audio/mp3,audio/mp4,audio/x-m4a">
       <audio id="uploadPlayback" controls class="hidden"></audio>
     </div>
 
-    <p class="muted" style="margin-top: 22px;"><strong>Or record in the browser</strong> (needs localhost or HTTPS for the mic).</p>
-    <p class="sample-read"><strong>Suggested script (read aloud in your normal voice):</strong>
+    <p class="muted" style="margin-top: 22px;"><strong>Or record in the browser</strong> (localhost or HTTPS for the mic).</p>
+    <p class="sample-read"><strong>Suggested script (read in your normal voice):</strong>
     Last Thursday morning, I walked through our quiet neighborhood while the weather shifted from thick fog to bright sunshine. A neighbor waved, juggling books and a thermos, and we chatted briefly about travel plans for the spring. Birds were surprisingly loud down by the river path, and I remember thinking how peaceful it felt to rush nowhere in particular.</p>
     <button id="record" class="secondary" type="button">Start recording</button>
     <button id="stop" class="danger" type="button" disabled>Stop recording</button>
@@ -72,10 +72,19 @@ INDEX_HTML = """
   </section>
 
   <form id="generateForm" class="card">
-    <h2>2. Enter English text</h2>
+    <h2>2. Reference transcript (optional)</h2>
+    <p class="muted">For <strong>better timbre match</strong>, paste the exact words you spoke in the reference recording (same language as the clip, often English if you used the script below).</p>
+    <label for="refText">Transcript of reference audio</label>
+    <textarea id="refText" name="ref_text" rows="4" placeholder="Leave empty for embedding-only mode, or paste what you said…"></textarea>
+    <label class="muted" style="margin-top:14px;display:flex;align-items:flex-start;gap:10px;font-weight:600;cursor:pointer;">
+      <input type="checkbox" id="autoTranscribe" name="auto_transcribe" value="1" style="width:auto;margin-top:4px;">
+      <span>Auto-transcribe reference with Whisper (English). Uses the first run to download the ASR model. Ignored if you filled the transcript above.</span>
+    </label>
+
+    <h2 style="margin-top:22px;">3. English text</h2>
     <label for="text">English text</label>
     <textarea id="text" name="text" placeholder="Good morning, how are you?" required></textarea>
-    <button class="primary" type="submit">Generate German Voice</button>
+    <button class="primary" type="submit">Generate German voice</button>
   </form>
 
   <section id="result" class="card hidden">
@@ -89,7 +98,7 @@ INDEX_HTML = """
 <script>
 let recorder;
 let chunks = [];
-/** @type {{ blob: Blob, filename: string } | null} */
+/** @type {null | {blob: Blob, filename: string}} */
 let voiceForSubmit = null;
 let uploadObjectUrl = null;
 
@@ -104,7 +113,6 @@ const result = document.getElementById('result');
 const german = document.getElementById('german');
 const germanPlayback = document.getElementById('germanPlayback');
 
-/** getUserMedia is only exposed on secure contexts; plain http:// + LAN hostname leaves mediaDevices undefined. */
 function getMicStream() {
   const constraints = { audio: true };
   if (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function') {
@@ -173,8 +181,8 @@ voiceFileInput.addEventListener('change', () => {
   const file = voiceFileInput.files && voiceFileInput.files[0];
   if (!file) return;
   const lower = file.name.toLowerCase();
-  if (!lower.endsWith('.wav') && !lower.endsWith('.mp3')) {
-    statusEl.textContent = 'Please choose a .wav or .mp3 file.';
+  if (!lower.endsWith('.wav') && !lower.endsWith('.mp3') && !lower.endsWith('.m4a')) {
+    statusEl.textContent = 'Please choose a .wav, .mp3, or .m4a file.';
     voiceFileInput.value = '';
     return;
   }
@@ -192,15 +200,22 @@ voiceFileInput.addEventListener('change', () => {
 form.addEventListener('submit', async event => {
   event.preventDefault();
   if (!voiceForSubmit) {
-    statusEl.textContent = 'Record your voice or upload a WAV/MP3 file first.';
+    statusEl.textContent = 'Record your voice or upload a WAV, MP3, or M4A file first (required for cloning).';
     return;
   }
 
   const data = new FormData();
   data.append('text', document.getElementById('text').value);
   data.append('voice', voiceForSubmit.blob, voiceForSubmit.filename);
+  const refEl = document.getElementById('refText');
+  if (refEl && refEl.value.trim()) {
+    data.append('ref_text', refEl.value.trim());
+  }
+  if (document.getElementById('autoTranscribe') && document.getElementById('autoTranscribe').checked) {
+    data.append('auto_transcribe', '1');
+  }
 
-  statusEl.textContent = 'Translating and generating audio. First run can take several minutes while the model downloads...';
+  statusEl.textContent = 'Translating and generating audio. First run can take several minutes while models download...';
   result.classList.add('hidden');
 
   try {
@@ -228,8 +243,8 @@ def create_app(
     synthesizer: Synthesizer = synthesize_german_voice,
 ) -> Flask:
     app = Flask(__name__)
-    output_path = Path(output_dir)
-    sample_path = Path(sample_dir)
+    output_path = Path(output_dir).expanduser().resolve()
+    sample_path = Path(sample_dir).expanduser().resolve()
     output_path.mkdir(parents=True, exist_ok=True)
     sample_path.mkdir(parents=True, exist_ok=True)
     counter = itertools.count(1)
@@ -248,17 +263,26 @@ def create_app(
         if not english:
             return jsonify(error="English text is required."), 400
         if voice is None or voice.filename == "":
-            return jsonify(error="A recorded voice file is required."), 400
+            return jsonify(error="A voice recording or uploaded reference file is required for cloning."), 400
 
-        extension = Path(secure_filename(voice.filename)).suffix or ".webm"
         number = next(counter)
-        speaker_file = sample_path / f"recording_{number:03d}{extension}"
         output_file = output_path / f"german_voice_{number:03d}.wav"
+        extension = Path(secure_filename(voice.filename)).suffix or ".webm"
+        speaker_file = sample_path / f"recording_{number:03d}{extension}"
         voice.save(speaker_file)
+
+        ref_text_raw = request.form.get("ref_text", "").strip() or None
+        auto_tc = request.form.get("auto_transcribe", "").lower() in ("1", "on", "true", "yes")
 
         try:
             german_text = translator(english)
-            synthesizer(german_text, speaker_file, output_file)
+            synthesizer(
+                german_text,
+                speaker_file,
+                output_file,
+                ref_text=ref_text_raw,
+                auto_transcribe_reference=auto_tc,
+            )
         except Exception as exc:  # noqa: BLE001 - display error to local user
             return jsonify(error=str(exc)), 500
 
