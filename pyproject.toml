@@ -22,6 +22,7 @@ dev = ["pytest>=8.0.0"]
 [project.scripts]
 voice-german-cloner = "voice_german_cloner.__main__:main"
 voice-german-web = "voice_german_cloner.web:main"
+voice-german-backend = "voice_german_cloner.backend_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

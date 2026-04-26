@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Multilingual Voice Cloner Desktop</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main>
+    <header class="app-header">
+      <h1>Multilingual voice in your voice</h1>
+      <p class="muted" id="backendInfo">Starting local backend...</p>
+    </header>
+
+    <div class="workspace">
+      <section class="pane">
+        <section class="card">
+          <h2>1. Voice sample (required)</h2>
+          <p class="muted">Upload WAV, MP3, or M4A, or record in app.</p>
+          <input id="voiceFile" type="file" accept=".wav,.mp3,.m4a,audio/wav,audio/wave,audio/x-wav,audio/mpeg,audio/mp3,audio/mp4,audio/x-m4a">
+          <audio id="uploadPlayback" controls class="hidden"></audio>
+          <div class="row">
+            <button id="record" class="secondary" type="button">Start recording</button>
+            <button id="stop" class="danger" type="button" disabled>Stop recording</button>
+          </div>
+          <audio id="recordingPlayback" controls class="hidden"></audio>
+        </section>
+
+        <section class="card">
+          <h2>Saved voices</h2>
+          <div class="row">
+            <input id="saveVoiceName" type="text" placeholder="Voice name (e.g. My Desk Mic)">
+            <button id="saveCurrentVoice" class="secondary" type="button">Save current sample</button>
+          </div>
+          <div class="row">
+            <select id="savedVoiceSelect">
+              <option value="">No saved voice selected</option>
+            </select>
+            <button id="refreshSavedVoices" class="secondary" type="button">Refresh</button>
+            <button id="deleteSavedVoice" class="danger" type="button">Delete selected</button>
+          </div>
+        </section>
+      </section>
+
+      <section class="pane">
+        <form id="generateForm" class="card">
+          <h2>2. Text to speak</h2>
+          <div class="row">
+            <div>
+              <label for="sourceLanguage">Source language</label>
+              <select id="sourceLanguage" name="source_language">
+                <option value="en" selected>English</option>
+                <option value="de">German</option>
+                <option value="zh">Chinese</option>
+                <option value="es">Spanish</option>
+              </select>
+            </div>
+            <div>
+              <label for="targetLanguage">Target voice language</label>
+              <select id="targetLanguage" name="target_language"></select>
+            </div>
+          </div>
+          <p id="languageHint" class="muted">English -> German</p>
+          <label for="text" id="textLabel">English text</label>
+          <textarea id="text" name="text" placeholder="Good morning, how are you?" required></textarea>
+          <label class="muted checkline">
+            <input type="checkbox" id="skipTranslation" name="skip_translation" value="1">
+            <span>Text is already in target language (skip translation).</span>
+          </label>
+        </form>
+
+        <details class="card">
+          <summary>Reference transcript (optional)</summary>
+          <label for="refText">Transcript of reference audio</label>
+          <textarea id="refText" name="ref_text" rows="4" placeholder="Leave empty for embedding-only mode"></textarea>
+          <label class="muted checkline">
+            <input type="checkbox" id="autoTranscribe" name="auto_transcribe" value="1">
+            <span>Auto-transcribe reference with Whisper (English).</span>
+          </label>
+          <label for="asrModel">Whisper model</label>
+          <select id="asrModel" name="asr_model">
+            <option value="openai/whisper-tiny" selected>openai/whisper-tiny</option>
+            <option value="openai/whisper-base">openai/whisper-base</option>
+            <option value="openai/whisper-small">openai/whisper-small</option>
+          </select>
+        </details>
+
+        <div>
+          <button class="primary" type="submit" form="generateForm">Generate voice</button>
+        </div>
+
+        <section id="result" class="card hidden">
+          <h2>Result</h2>
+          <p><strong id="targetLanguageLabel">Generated text:</strong> <span id="generatedText"></span></p>
+          <audio id="voicePlayback" controls></audio>
+        </section>
+      </section>
+    </div>
+
+    <footer class="action-bar">
+      <p id="status" class="muted"></p>
+    </footer>
+  </main>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

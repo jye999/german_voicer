@@ -1,10 +1,31 @@
 from __future__ import annotations
 
 import io
+import time
+import types
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from voice_german_cloner.web import create_app
+
+
+def submit_and_wait_for_done(client, data: dict[str, Any]) -> dict[str, Any]:
+    response = client.post("/generate", data=data, content_type="multipart/form-data")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert "job_id" in payload
+    job_id = payload["job_id"]
+    for _ in range(30):
+        status = client.get(f"/generate-status/{job_id}")
+        assert status.status_code == 200
+        status_payload = status.get_json()
+        if status_payload["status"] == "done":
+            return status_payload
+        if status_payload["status"] == "error":
+            raise AssertionError(status_payload.get("error", "Generation failed"))
+        time.sleep(0.02)
+    raise AssertionError("Timed out waiting for generation job to finish")
 
 
 def test_home_page_has_cloning_ui(tmp_path: Path) -> None:
@@ -68,17 +89,13 @@ def test_generate_with_voice_returns_audio_url(tmp_path: Path) -> None:
         synthesizer=fake_synthesize,
     )
 
-    response = app.test_client().post(
-        "/generate",
-        data={
+    payload = submit_and_wait_for_done(
+        app.test_client(),
+        {
             "text": "Good morning",
             "voice": (io.BytesIO(b"webm audio bytes"), "recording.webm"),
         },
-        content_type="multipart/form-data",
     )
-
-    assert response.status_code == 200
-    payload = response.get_json()
     assert payload["source_text"] == "Good morning"
     assert payload["target_text"] == "Guten Morgen"
     assert payload["source_language"] == "en"
@@ -120,18 +137,14 @@ def test_generate_direct_german_skips_translation(tmp_path: Path) -> None:
         synthesizer=fake_synthesize,
     )
 
-    response = app.test_client().post(
-        "/generate",
-        data={
+    payload = submit_and_wait_for_done(
+        app.test_client(),
+        {
             "text": "Guten Morgen",
             "language_flow": "de-de",
             "voice": (io.BytesIO(b"webm audio bytes"), "recording.webm"),
         },
-        content_type="multipart/form-data",
     )
-
-    assert response.status_code == 200
-    payload = response.get_json()
     assert payload["source_text"] == "Guten Morgen"
     assert payload["target_text"] == "Guten Morgen"
     assert payload["source_language"] == "de"
@@ -168,19 +181,15 @@ def test_generate_translates_english_to_chinese(tmp_path: Path) -> None:
         synthesizer=fake_synthesize,
     )
 
-    response = app.test_client().post(
-        "/generate",
-        data={
+    payload = submit_and_wait_for_done(
+        app.test_client(),
+        {
             "text": "Good morning",
             "source_language": "en",
             "target_language": "zh",
             "voice": (io.BytesIO(b"webm audio bytes"), "recording.webm"),
         },
-        content_type="multipart/form-data",
     )
-
-    assert response.status_code == 200
-    payload = response.get_json()
     assert payload["target_text"] == "早上好"
     assert payload["target_language"] == "zh"
     assert payload["target_language_name"] == "Chinese"
@@ -216,19 +225,15 @@ def test_generate_translates_spanish_to_english(tmp_path: Path) -> None:
         synthesizer=fake_synthesize,
     )
 
-    response = app.test_client().post(
-        "/generate",
-        data={
+    payload = submit_and_wait_for_done(
+        app.test_client(),
+        {
             "text": "Buenos dias",
             "source_language": "es",
             "target_language": "en",
             "voice": (io.BytesIO(b"webm audio bytes"), "recording.webm"),
         },
-        content_type="multipart/form-data",
     )
-
-    assert response.status_code == 200
-    payload = response.get_json()
     assert payload["target_text"] == "Good morning"
     assert payload["target_language"] == "en"
     assert payload["target_language_name"] == "English"
@@ -279,18 +284,14 @@ def test_generate_supports_legacy_german_text_language(tmp_path: Path) -> None:
         synthesizer=fake_synthesize,
     )
 
-    response = app.test_client().post(
-        "/generate",
-        data={
+    payload = submit_and_wait_for_done(
+        app.test_client(),
+        {
             "text": "Guten Morgen",
             "text_language": "de",
             "voice": (io.BytesIO(b"webm audio bytes"), "recording.webm"),
         },
-        content_type="multipart/form-data",
     )
-
-    assert response.status_code == 200
-    payload = response.get_json()
     assert payload["target_text"] == "Guten Morgen"
     assert payload["language_flow"] == "German direct"
     assert calls == [{"target_text": "Guten Morgen", "language": "German"}]
@@ -335,16 +336,14 @@ def test_generate_passes_ref_text_for_icl(tmp_path: Path) -> None:
         synthesizer=fake_synthesize,
     )
 
-    response = app.test_client().post(
-        "/generate",
-        data={
+    payload = submit_and_wait_for_done(
+        app.test_client(),
+        {
             "text": "Hi",
             "voice": (io.BytesIO(b"a"), "r.webm"),
             "ref_text": "  Exact words I said.  ",
         },
-        content_type="multipart/form-data",
     )
-    assert response.status_code == 200
     assert calls[0]["ref_text"] == "Exact words I said."
     assert calls[0]["auto"] is False
 
@@ -375,16 +374,14 @@ def test_generate_auto_transcribe_flag(tmp_path: Path) -> None:
         synthesizer=fake_synthesize,
     )
 
-    response = app.test_client().post(
-        "/generate",
-        data={
+    submit_and_wait_for_done(
+        app.test_client(),
+        {
             "text": "Hi",
             "voice": (io.BytesIO(b"a"), "r.webm"),
             "auto_transcribe": "1",
         },
-        content_type="multipart/form-data",
     )
-    assert response.status_code == 200
     assert calls[0]["ref_text"] is None
     assert calls[0]["auto"] is True
 
@@ -403,7 +400,8 @@ def test_synthesize_uses_asr_when_auto(tmp_path: Path) -> None:
 
     with patch("voice_german_cloner.ref_audio_transcribe.transcribe_reference_audio", return_value="asr text") as tr:
         with patch("voice_german_cloner.core._qwen_clone_model", return_value=mock_model):
-            with patch("soundfile.write") as sfw:
+            fake_soundfile = types.SimpleNamespace(write=MagicMock())
+            with patch.dict("sys.modules", {"soundfile": fake_soundfile}):
                 synthesize_voice("Hallo", speaker, out, language="German", auto_transcribe_reference=True)
 
     tr.assert_called_once_with(speaker, model_id=None)
@@ -411,7 +409,7 @@ def test_synthesize_uses_asr_when_auto(tmp_path: Path) -> None:
     assert kw["ref_text"] == "asr text"
     assert kw["language"] == "German"
     assert kw["x_vector_only_mode"] is False
-    sfw.assert_called_once()
+    fake_soundfile.write.assert_called_once()
 
 
 def test_output_wav_is_served_after_generate(tmp_path: Path) -> None:
@@ -437,16 +435,14 @@ def test_output_wav_is_served_after_generate(tmp_path: Path) -> None:
         synthesizer=fake_synthesize,
     )
     client = app.test_client()
-    post = client.post(
-        "/generate",
-        data={
+    payload = submit_and_wait_for_done(
+        client,
+        {
             "text": "Hi",
             "voice": (io.BytesIO(b"x"), "a.webm"),
         },
-        content_type="multipart/form-data",
     )
-    assert post.status_code == 200
-    url = post.get_json()["audio_url"]
+    url = payload["audio_url"]
     get = client.get(url)
     assert get.status_code == 200
     assert get.data == b"RIFF"
@@ -506,16 +502,13 @@ def test_generate_can_use_saved_voice_id(tmp_path: Path) -> None:
     assert save.status_code == 201
     saved_id = save.get_json()["id"]
 
-    response = client.post(
-        "/generate",
-        data={
+    submit_and_wait_for_done(
+        client,
+        {
             "text": "Hello",
             "saved_voice_id": saved_id,
         },
-        content_type="multipart/form-data",
     )
-
-    assert response.status_code == 200
     assert calls
     assert Path(calls[0]["speaker"]).exists()
     assert Path(calls[0]["speaker"]).parent.name == "saved"

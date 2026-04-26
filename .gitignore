@@ -8,3 +8,9 @@ outputs/*.wav
 outputs/*.mp3
 voice_samples/*
 !voice_samples/.gitkeep
+build/
+dist/
+desktop/node_modules/
+desktop/src-tauri/target/
+backend-dist/voice-german-backend
+backend-dist/voice-german-backend.exe

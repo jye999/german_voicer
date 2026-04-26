@@ -99,6 +99,70 @@ The web UI now includes a **Saved voices** section:
 - Reuse that saved voice in later generations without re-uploading.
 - Delete saved voices you no longer need.
 
+## Desktop app (Tauri + bundled backend)
+
+The project now includes a desktop shell in [`desktop/`](desktop/) that launches a bundled local backend worker (`voice-german-backend`) and talks to it over `http://127.0.0.1:<port>`.
+
+### Desktop architecture
+
+- `desktop/src-tauri/` - Rust host process (starts/stops backend and exposes backend URL to UI)
+- `desktop/src/` - Desktop UI (same flow as web: saved voices, direct input, progress polling)
+- `src/voice_german_cloner/backend_server.py` - backend entrypoint used by packaged app
+
+### Build packaged backend artifact
+
+Linux/macOS shell:
+
+```bash
+uv pip install pyinstaller
+./scripts/build_backend_dist.sh
+```
+
+Windows PowerShell:
+
+```powershell
+uv pip install pyinstaller
+./scripts/build_backend_dist.ps1
+```
+
+This creates:
+
+- `backend-dist/voice-german-backend` (Linux)
+- `backend-dist/voice-german-backend.exe` (Windows)
+
+### Build desktop installers
+
+Linux (`.deb` + `.AppImage`):
+
+```bash
+./scripts/build_desktop_linux.sh
+```
+
+Windows (`.msi` + `.exe`/NSIS):
+
+```powershell
+./scripts/build_desktop_windows.ps1
+```
+
+Installer outputs are under:
+
+`desktop/src-tauri/target/release/bundle/`
+
+### First run notes
+
+- First run may take several minutes while models download.
+- Backend data (generated outputs, saved voices, model cache) is stored in the app data directory managed by Tauri.
+- GPU/CUDA is strongly recommended for practical generation speed.
+
+### GitHub Actions (CI + desktop installers)
+
+- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — on every push and pull request to `main`, runs the Python test suite (`pytest`) on Ubuntu with Python **3.11**.
+- [`.github/workflows/desktop-build.yml`](.github/workflows/desktop-build.yml) — builds **Linux** (`.deb`, `.AppImage`) and **Windows** (`.msi`, NSIS `.exe`) bundles. It runs on pushes to `main`, on tags `v*`, and via **Actions → Desktop build → Run workflow** (`workflow_dispatch`). It is intentionally **not** tied to pull requests because the PyInstaller + PyTorch + Tauri pipeline is large and slow.
+
+Built artifacts are uploaded as workflow artifacts (`desktop-bundles-linux`, `desktop-bundles-windows`).
+
+If the Linux job fails with disk or install errors, try increasing runner disk (larger GitHub-hosted runner) or trimming optional system packages; the desktop job also removes some unused preinstalled SDK folders on Ubuntu to free space before the build.
+
 ## Command-line mode
 
 English -> German, embedding-only (default):

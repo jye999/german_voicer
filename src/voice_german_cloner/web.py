@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import itertools
 import json
 import threading
@@ -597,6 +598,17 @@ def create_app(
         resp.headers["Cache-Control"] = "no-store, max-age=0, must-revalidate"
         return resp
 
+    @app.after_request
+    def add_cors_headers(response):
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET,POST,DELETE,OPTIONS"
+        return response
+
+    @app.get("/health")
+    def health():
+        return jsonify(ok=True)
+
     @app.post("/generate")
     def generate():
         text = request.form.get("text", "").strip()
@@ -753,9 +765,37 @@ def create_app(
     return app
 
 
-def main() -> None:
-    app = create_app()
-    app.run(host="0.0.0.0", port=7860, debug=True)
+def run_web_server(
+    *,
+    host: str = "0.0.0.0",
+    port: int = 7860,
+    output_dir: str | Path = "outputs",
+    sample_dir: str | Path = "voice_samples",
+    debug: bool = False,
+) -> None:
+    app = create_app(output_dir=output_dir, sample_dir=sample_dir)
+    app.run(host=host, port=port, debug=debug)
+
+
+def build_web_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run local voice cloning Flask API/web UI.")
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=7860)
+    parser.add_argument("--output-dir", default="outputs")
+    parser.add_argument("--sample-dir", default="voice_samples")
+    parser.add_argument("--debug", action="store_true")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = build_web_parser().parse_args(argv)
+    run_web_server(
+        host=args.host,
+        port=args.port,
+        output_dir=args.output_dir,
+        sample_dir=args.sample_dir,
+        debug=bool(args.debug),
+    )
 
 
 if __name__ == "__main__":
