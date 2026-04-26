@@ -9,9 +9,10 @@ from uuid import uuid4
 from flask import Flask, jsonify, make_response, render_template_string, request, send_from_directory
 from werkzeug.utils import secure_filename
 
-from .core import synthesize_german_voice, translate_english_to_german
+from .core import synthesize_voice, translate_text
+from .translation import LANGUAGE_FLOWS, language_name
 
-Translator = Callable[[str], str]
+Translator = Callable[[str, str, str], str]
 Synthesizer = Callable[..., Any]
 
 INDEX_HTML = """
@@ -20,7 +21,7 @@ INDEX_HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>German Voice Cloner</title>
+  <title>Multilingual Voice Cloner</title>
   <style>
     :root { color-scheme: dark; font-family: system-ui, -apple-system, sans-serif; }
     body { margin: 0; min-height: 100vh; background: #111827; color: #f9fafb; display: grid; place-items: center; }
@@ -56,8 +57,8 @@ INDEX_HTML = """
 </head>
 <body>
 <main>
-  <h1>English → German in your voice</h1>
-  <p class="muted">Local English→German translation, then <strong><a href="https://github.com/QwenLM/Qwen3-TTS" style="color:#93c5fd;">Qwen3-TTS</a> Base</strong> voice clone. Optional: paste a transcript of your reference clip or use auto-transcribe (Whisper) for stronger ICL cloning. Without that, only the speaker embedding is used. GPU recommended.</p>
+  <h1>Multilingual voice in your voice</h1>
+  <p class="muted">Translate between selected local language pairs, or enter target-language text directly, then use <strong><a href="https://github.com/QwenLM/Qwen3-TTS" style="color:#93c5fd;">Qwen3-TTS</a> Base</strong> voice clone. Optional: paste a transcript of your reference clip or use auto-transcribe (Whisper) for stronger ICL cloning. Without that, only the speaker embedding is used. GPU recommended.</p>
 
   <section class="card">
     <h2>1. Voice sample (required)</h2>
@@ -111,16 +112,32 @@ INDEX_HTML = """
       <option value="openai/whisper-small">openai/whisper-small</option>
     </select>
 
-    <h2 style="margin-top:22px;">3. English text</h2>
-    <label for="text">English text</label>
+    <h2 style="margin-top:22px;">3. Text to speak</h2>
+    <div class="row">
+      <div>
+        <label for="sourceLanguage" style="margin-top:0;">Source language</label>
+        <select id="sourceLanguage" name="source_language">
+          <option value="en" selected>English</option>
+          <option value="de">German</option>
+          <option value="zh">Chinese</option>
+          <option value="es">Spanish</option>
+        </select>
+      </div>
+      <div>
+        <label for="targetLanguage" style="margin-top:0;">Target voice language</label>
+        <select id="targetLanguage" name="target_language"></select>
+      </div>
+    </div>
+    <p id="languageHint" class="muted" style="margin:10px 0 0;">English → German</p>
+    <label for="text" id="textLabel">English text</label>
     <textarea id="text" name="text" placeholder="Good morning, how are you?" required></textarea>
-    <button class="primary" type="submit">Generate German voice</button>
+    <button class="primary" type="submit">Generate voice</button>
   </form>
 
   <section id="result" class="card hidden">
     <h2>Result</h2>
-    <p><strong>German:</strong> <span id="german"></span></p>
-    <audio id="germanPlayback" controls></audio>
+    <p><strong id="targetLanguageLabel">Generated text:</strong> <span id="generatedText"></span></p>
+    <audio id="voicePlayback" controls></audio>
   </section>
 
   <p id="status" class="muted"></p>
@@ -140,13 +157,65 @@ const uploadPlayback = document.getElementById('uploadPlayback');
 const statusEl = document.getElementById('status');
 const form = document.getElementById('generateForm');
 const result = document.getElementById('result');
-const german = document.getElementById('german');
-const germanPlayback = document.getElementById('germanPlayback');
+const generatedText = document.getElementById('generatedText');
+const targetLanguageLabel = document.getElementById('targetLanguageLabel');
+const voicePlayback = document.getElementById('voicePlayback');
 const saveVoiceName = document.getElementById('saveVoiceName');
 const saveCurrentVoiceBtn = document.getElementById('saveCurrentVoice');
 const savedVoiceSelect = document.getElementById('savedVoiceSelect');
 const refreshSavedVoicesBtn = document.getElementById('refreshSavedVoices');
 const deleteSavedVoiceBtn = document.getElementById('deleteSavedVoice');
+const sourceLanguage = document.getElementById('sourceLanguage');
+const targetLanguage = document.getElementById('targetLanguage');
+const languageHint = document.getElementById('languageHint');
+const textInput = document.getElementById('text');
+const textLabel = document.getElementById('textLabel');
+
+const languageNames = {
+  en: 'English',
+  de: 'German',
+  zh: 'Chinese',
+  es: 'Spanish',
+};
+
+const supportedTargets = {
+  en: ['de', 'zh', 'en', 'es'],
+  de: ['de', 'en'],
+  zh: ['zh', 'en'],
+  es: ['en', 'es'],
+};
+
+const sourceCopy = {
+  en: ['English text', 'Good morning, how are you?'],
+  de: ['German text', 'Guten Morgen, wie geht es dir?'],
+  zh: ['Chinese text', '早上好，你好吗？'],
+  es: ['Spanish text', 'Buenos dias, como estas?'],
+};
+
+function updateLanguageSelectors() {
+  const source = sourceLanguage.value;
+  const previousTarget = targetLanguage.value;
+  const targets = supportedTargets[source] || [];
+  targetLanguage.innerHTML = '';
+  for (const target of targets) {
+    const option = document.createElement('option');
+    option.value = target;
+    option.textContent =
+      source === target
+        ? languageNames[target] + ' direct (no translation)'
+        : languageNames[target];
+    targetLanguage.appendChild(option);
+  }
+  targetLanguage.value = targets.includes(previousTarget) ? previousTarget : targets[0];
+  const copy = sourceCopy[source] || sourceCopy.en;
+  textLabel.textContent = copy[0];
+  textInput.placeholder = copy[1];
+  const target = targetLanguage.value;
+  languageHint.textContent =
+    source === target
+      ? languageNames[target] + ' direct (no translation)'
+      : languageNames[source] + ' → ' + languageNames[target];
+}
 
 function setSavedVoiceOptions(items) {
   savedVoiceSelect.innerHTML = '';
@@ -314,7 +383,10 @@ form.addEventListener('submit', async event => {
   }
 
   const data = new FormData();
-  data.append('text', document.getElementById('text').value);
+  data.append('text', textInput.value);
+  data.append('source_language', sourceLanguage.value);
+  data.append('target_language', targetLanguage.value);
+  data.append('language_flow', sourceLanguage.value + '-' + targetLanguage.value);
   if (voiceForSubmit) {
     data.append('voice', voiceForSubmit.blob, voiceForSubmit.filename);
   } else if (savedVoiceId) {
@@ -332,15 +404,20 @@ form.addEventListener('submit', async event => {
     }
   }
 
-  statusEl.textContent = 'Translating and generating audio. First run can take several minutes while models download...';
+  const isDirect = sourceLanguage.value === targetLanguage.value;
+  statusEl.textContent =
+    isDirect
+      ? 'Generating audio directly. First run can take several minutes while models download...'
+      : 'Translating and generating audio. First run can take several minutes while models download...';
   result.classList.add('hidden');
 
   try {
     const response = await fetch('/generate', { method: 'POST', body: data });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Generation failed');
-    german.textContent = payload.german;
-    germanPlayback.src = payload.audio_url + '?t=' + Date.now();
+    targetLanguageLabel.textContent = (payload.target_language_name || 'Generated') + ':';
+    generatedText.textContent = payload.target_text;
+    voicePlayback.src = payload.audio_url + '?t=' + Date.now();
     result.classList.remove('hidden');
     statusEl.textContent = 'Done.';
   } catch (error) {
@@ -349,6 +426,9 @@ form.addEventListener('submit', async event => {
 });
 
 loadSavedVoices();
+sourceLanguage.addEventListener('change', updateLanguageSelectors);
+targetLanguage.addEventListener('change', updateLanguageSelectors);
+updateLanguageSelectors();
 </script>
 </body>
 </html>
@@ -358,8 +438,8 @@ loadSavedVoices();
 def create_app(
     output_dir: Path | str = "outputs",
     sample_dir: Path | str = "voice_samples",
-    translator: Translator = translate_english_to_german,
-    synthesizer: Synthesizer = synthesize_german_voice,
+    translator: Translator = translate_text,
+    synthesizer: Synthesizer = synthesize_voice,
 ) -> Flask:
     app = Flask(__name__)
     output_path = Path(output_dir).expanduser().resolve()
@@ -391,6 +471,32 @@ def create_app(
                 return item
         return None
 
+    def resolve_language_flow() -> tuple[str, str, str]:
+        source_language = request.form.get("source_language", "").strip().lower()
+        target_language = request.form.get("target_language", "").strip().lower()
+        if source_language or target_language:
+            language_flow = f"{source_language}-{target_language}"
+            try:
+                flow = LANGUAGE_FLOWS[language_flow]
+                return flow.source_language, flow.target_language, flow.label
+            except KeyError as exc:
+                supported = ", ".join(LANGUAGE_FLOWS)
+                raise ValueError(
+                    f"Language pair must be one of the supported flows: {supported}."
+                ) from exc
+
+        language_flow = request.form.get("language_flow", "").strip().lower()
+        if not language_flow:
+            # Backward compatibility for the earlier English/German-only form.
+            text_language = request.form.get("text_language", "en").strip().lower() or "en"
+            language_flow = "de-de" if text_language == "de" else "en-de"
+        try:
+            flow = LANGUAGE_FLOWS[language_flow]
+            return flow.source_language, flow.target_language, flow.label
+        except KeyError as exc:
+            supported = ", ".join(LANGUAGE_FLOWS)
+            raise ValueError(f"Language flow must be one of: {supported}.") from exc
+
     @app.get("/")
     def index():
         resp = make_response(render_template_string(INDEX_HTML))
@@ -399,15 +505,19 @@ def create_app(
 
     @app.post("/generate")
     def generate():
-        english = request.form.get("text", "").strip()
+        text = request.form.get("text", "").strip()
         voice = request.files.get("voice")
         saved_voice_id = request.form.get("saved_voice_id", "").strip()
 
-        if not english:
-            return jsonify(error="English text is required."), 400
+        try:
+            source_language, target_language, flow_label = resolve_language_flow()
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+        if not text:
+            return jsonify(error=f"{language_name(source_language)} text is required."), 400
 
         number = next(counter)
-        output_file = output_path / f"german_voice_{number:03d}.wav"
+        output_file = output_path / f"voice_{target_language}_{number:03d}.wav"
         if voice is not None and voice.filename:
             extension = Path(secure_filename(voice.filename)).suffix or ".webm"
             speaker_file = sample_path / f"recording_{number:03d}{extension}"
@@ -427,11 +537,12 @@ def create_app(
         asr_model = request.form.get("asr_model", "").strip() or None
 
         try:
-            german_text = translator(english)
+            target_text = text if source_language == target_language else translator(text, source_language, target_language)
             synthesizer(
-                german_text,
+                target_text,
                 speaker_file,
                 output_file,
+                language=language_name(target_language),
                 ref_text=ref_text_raw,
                 auto_transcribe_reference=auto_tc,
                 asr_model=asr_model,
@@ -440,8 +551,13 @@ def create_app(
             return jsonify(error=str(exc)), 500
 
         return jsonify(
-            english=english,
-            german=german_text,
+            source_text=text,
+            target_text=target_text,
+            source_language=source_language,
+            target_language=target_language,
+            source_language_name=language_name(source_language),
+            target_language_name=language_name(target_language),
+            language_flow=flow_label,
             audio_url=f"/outputs/{output_file.name}",
         )
 
