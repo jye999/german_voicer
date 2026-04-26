@@ -43,6 +43,12 @@ cd ~/german_voicer
 uv sync
 ```
 
+Install system audio tools (Ubuntu/WSL):
+
+```bash
+sudo apt update && sudo apt install -y sox ffmpeg
+```
+
 Dev (pytest):
 
 ```bash
@@ -67,7 +73,13 @@ Or:
 uv run voice-german-web
 ```
 
-Bind: `0.0.0.0:7860` — open [http://127.0.0.1:7860](http://127.0.0.1:7860). A **voice sample is required**. Optional **reference transcript** field and **Auto-transcribe** checkbox are in section 2 of the form.
+Bind: `0.0.0.0:7860` — open [http://127.0.0.1:7860](http://127.0.0.1:7860). A **voice sample is required** for first use. Optional **reference transcript** field and **Auto-transcribe** checkbox are in section 2 of the form.
+
+The web UI now includes a **Saved voices** section:
+
+- Save an uploaded/recorded sample with a name.
+- Reuse that saved voice in later generations without re-uploading.
+- Delete saved voices you no longer need.
 
 ## Command-line mode
 

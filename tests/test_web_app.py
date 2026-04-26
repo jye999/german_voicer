@@ -21,6 +21,7 @@ def test_home_page_has_cloning_ui(tmp_path: Path) -> None:
     assert "Qwen3-TTS" in html
     assert "Reference transcript" in html
     assert "Whisper" in html
+    assert "Saved voices" in html
 
 
 def test_generate_with_voice_returns_audio_url(tmp_path: Path) -> None:
@@ -230,3 +231,84 @@ def test_generate_requires_text_and_voice(tmp_path: Path) -> None:
     )
     assert r2.status_code == 400
     assert "voice" in r2.get_json()["error"].lower()
+
+
+def test_generate_can_use_saved_voice_id(tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_translate(text: str) -> str:
+        return "Hallo"
+
+    def fake_synthesize(
+        german_text: str,
+        speaker_wav: Path,
+        output_path: Path,
+        *,
+        ref_text: str | None = None,
+        auto_transcribe_reference: bool = False,
+    ) -> None:
+        calls.append({"speaker": speaker_wav})
+        output_path.write_bytes(b"ok")
+
+    app = create_app(
+        output_dir=tmp_path / "outputs",
+        sample_dir=tmp_path / "samples",
+        translator=fake_translate,
+        synthesizer=fake_synthesize,
+    )
+    client = app.test_client()
+
+    save = client.post(
+        "/saved-voices",
+        data={
+            "name": "My voice",
+            "voice": (io.BytesIO(b"voice-bytes"), "sample.webm"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert save.status_code == 201
+    saved_id = save.get_json()["id"]
+
+    response = client.post(
+        "/generate",
+        data={
+            "text": "Hello",
+            "saved_voice_id": saved_id,
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    assert calls
+    assert Path(calls[0]["speaker"]).exists()
+    assert Path(calls[0]["speaker"]).parent.name == "saved"
+
+
+def test_saved_voice_crud_endpoints(tmp_path: Path) -> None:
+    app = create_app(output_dir=tmp_path / "outputs", sample_dir=tmp_path / "samples")
+    client = app.test_client()
+
+    save = client.post(
+        "/saved-voices",
+        data={
+            "name": "Desk Mic",
+            "voice": (io.BytesIO(b"abc"), "desk.wav"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert save.status_code == 201
+    payload = save.get_json()
+    assert payload["name"] == "Desk Mic"
+    saved_id = payload["id"]
+
+    listed = client.get("/saved-voices")
+    assert listed.status_code == 200
+    items = listed.get_json()["items"]
+    assert any(item["id"] == saved_id and item["name"] == "Desk Mic" for item in items)
+
+    deleted = client.delete(f"/saved-voices/{saved_id}")
+    assert deleted.status_code == 200
+    listed_after = client.get("/saved-voices")
+    assert listed_after.status_code == 200
+    items_after = listed_after.get_json()["items"]
+    assert all(item["id"] != saved_id for item in items_after)

@@ -13,6 +13,7 @@ dependencies = [
   "soundfile>=0.12.1",
   "Flask>=3.0.0",
   "sentencepiece>=0.1.99",
+  "sacremoses>=0.1.1",
 ]
 
 [project.optional-dependencies]

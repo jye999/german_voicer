@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import itertools
+import json
 from pathlib import Path
 from typing import Any, Callable
+from uuid import uuid4
 
 from flask import Flask, jsonify, make_response, render_template_string, request, send_from_directory
 from werkzeug.utils import secure_filename
@@ -45,6 +47,11 @@ INDEX_HTML = """
     #voiceFile::-webkit-file-upload-button {
       background: #60a5fa; color: #082f49; border: 0; border-radius: 999px; padding: 10px 20px; font-weight: 700; cursor: pointer; margin-right: 14px;
     }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+    select, input[type="text"] {
+      border-radius: 10px; border: 1px solid #4b5563; background: #111827; color: #f9fafb; padding: 10px; font-size: 14px;
+    }
+    #savedVoiceSelect { min-width: 260px; }
   </style>
 </head>
 <body>
@@ -69,6 +76,23 @@ INDEX_HTML = """
     <button id="record" class="secondary" type="button">Start recording</button>
     <button id="stop" class="danger" type="button" disabled>Stop recording</button>
     <audio id="recordingPlayback" controls class="hidden"></audio>
+
+    <div class="card" style="margin-top:16px;">
+      <h3 style="margin:0 0 10px;">Saved voices</h3>
+      <p class="muted" style="margin-top:0;">Save your current uploaded/recorded sample once, then reuse it later.</p>
+      <div class="row">
+        <input id="saveVoiceName" type="text" placeholder="Voice name (e.g. My Desk Mic)">
+        <button id="saveCurrentVoice" class="secondary" type="button">Save current sample</button>
+      </div>
+      <div class="row">
+        <select id="savedVoiceSelect">
+          <option value="">No saved voice selected</option>
+        </select>
+        <button id="refreshSavedVoices" class="secondary" type="button">Refresh</button>
+        <button id="deleteSavedVoice" class="danger" type="button">Delete selected</button>
+      </div>
+      <p class="muted" style="margin:10px 0 0;">Tip: If a saved voice is selected and no new file is chosen, generation uses the saved voice.</p>
+    </div>
   </section>
 
   <form id="generateForm" class="card">
@@ -112,6 +136,36 @@ const form = document.getElementById('generateForm');
 const result = document.getElementById('result');
 const german = document.getElementById('german');
 const germanPlayback = document.getElementById('germanPlayback');
+const saveVoiceName = document.getElementById('saveVoiceName');
+const saveCurrentVoiceBtn = document.getElementById('saveCurrentVoice');
+const savedVoiceSelect = document.getElementById('savedVoiceSelect');
+const refreshSavedVoicesBtn = document.getElementById('refreshSavedVoices');
+const deleteSavedVoiceBtn = document.getElementById('deleteSavedVoice');
+
+function setSavedVoiceOptions(items) {
+  savedVoiceSelect.innerHTML = '';
+  const noneOption = document.createElement('option');
+  noneOption.value = '';
+  noneOption.textContent = 'No saved voice selected';
+  savedVoiceSelect.appendChild(noneOption);
+  for (const item of items) {
+    const option = document.createElement('option');
+    option.value = item.id;
+    option.textContent = item.name;
+    savedVoiceSelect.appendChild(option);
+  }
+}
+
+async function loadSavedVoices() {
+  try {
+    const response = await fetch('/saved-voices');
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Failed to load saved voices');
+    setSavedVoiceOptions(payload.items || []);
+  } catch (error) {
+    statusEl.textContent = error.message;
+  }
+}
 
 function getMicStream() {
   const constraints = { audio: true };
@@ -197,16 +251,69 @@ voiceFileInput.addEventListener('change', () => {
   statusEl.textContent = 'Using uploaded file: ' + file.name;
 });
 
+saveCurrentVoiceBtn.addEventListener('click', async () => {
+  if (!voiceForSubmit) {
+    statusEl.textContent = 'Upload or record a sample first, then save it.';
+    return;
+  }
+  const name = (saveVoiceName.value || '').trim();
+  if (!name) {
+    statusEl.textContent = 'Enter a name for the saved voice.';
+    return;
+  }
+  const data = new FormData();
+  data.append('name', name);
+  data.append('voice', voiceForSubmit.blob, voiceForSubmit.filename);
+  try {
+    const response = await fetch('/saved-voices', { method: 'POST', body: data });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Failed to save voice');
+    statusEl.textContent = 'Saved voice: ' + payload.name;
+    await loadSavedVoices();
+    if (payload.id) savedVoiceSelect.value = payload.id;
+    saveVoiceName.value = '';
+  } catch (error) {
+    statusEl.textContent = error.message;
+  }
+});
+
+refreshSavedVoicesBtn.addEventListener('click', async () => {
+  await loadSavedVoices();
+  statusEl.textContent = 'Saved voices refreshed.';
+});
+
+deleteSavedVoiceBtn.addEventListener('click', async () => {
+  const voiceId = savedVoiceSelect.value;
+  if (!voiceId) {
+    statusEl.textContent = 'Select a saved voice to delete.';
+    return;
+  }
+  try {
+    const response = await fetch('/saved-voices/' + encodeURIComponent(voiceId), { method: 'DELETE' });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Failed to delete saved voice');
+    statusEl.textContent = 'Deleted saved voice.';
+    await loadSavedVoices();
+  } catch (error) {
+    statusEl.textContent = error.message;
+  }
+});
+
 form.addEventListener('submit', async event => {
   event.preventDefault();
-  if (!voiceForSubmit) {
-    statusEl.textContent = 'Record your voice or upload a WAV, MP3, or M4A file first (required for cloning).';
+  const savedVoiceId = savedVoiceSelect.value;
+  if (!voiceForSubmit && !savedVoiceId) {
+    statusEl.textContent = 'Record/upload a voice, or select a saved voice first.';
     return;
   }
 
   const data = new FormData();
   data.append('text', document.getElementById('text').value);
-  data.append('voice', voiceForSubmit.blob, voiceForSubmit.filename);
+  if (voiceForSubmit) {
+    data.append('voice', voiceForSubmit.blob, voiceForSubmit.filename);
+  } else if (savedVoiceId) {
+    data.append('saved_voice_id', savedVoiceId);
+  }
   const refEl = document.getElementById('refText');
   if (refEl && refEl.value.trim()) {
     data.append('ref_text', refEl.value.trim());
@@ -230,6 +337,8 @@ form.addEventListener('submit', async event => {
     statusEl.textContent = error.message;
   }
 });
+
+loadSavedVoices();
 </script>
 </body>
 </html>
@@ -245,9 +354,32 @@ def create_app(
     app = Flask(__name__)
     output_path = Path(output_dir).expanduser().resolve()
     sample_path = Path(sample_dir).expanduser().resolve()
+    saved_path = sample_path / "saved"
+    saved_index_path = saved_path / "index.json"
     output_path.mkdir(parents=True, exist_ok=True)
     sample_path.mkdir(parents=True, exist_ok=True)
+    saved_path.mkdir(parents=True, exist_ok=True)
+    if not saved_index_path.exists():
+        saved_index_path.write_text("[]", encoding="utf-8")
     counter = itertools.count(1)
+
+    def load_saved_index() -> list[dict[str, str]]:
+        try:
+            data = json.loads(saved_index_path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return [item for item in data if isinstance(item, dict)]
+        except Exception:
+            pass
+        return []
+
+    def save_saved_index(items: list[dict[str, str]]) -> None:
+        saved_index_path.write_text(json.dumps(items, indent=2), encoding="utf-8")
+
+    def find_saved_voice(voice_id: str) -> dict[str, str] | None:
+        for item in load_saved_index():
+            if item.get("id") == voice_id:
+                return item
+        return None
 
     @app.get("/")
     def index():
@@ -259,17 +391,26 @@ def create_app(
     def generate():
         english = request.form.get("text", "").strip()
         voice = request.files.get("voice")
+        saved_voice_id = request.form.get("saved_voice_id", "").strip()
 
         if not english:
             return jsonify(error="English text is required."), 400
-        if voice is None or voice.filename == "":
-            return jsonify(error="A voice recording or uploaded reference file is required for cloning."), 400
 
         number = next(counter)
         output_file = output_path / f"german_voice_{number:03d}.wav"
-        extension = Path(secure_filename(voice.filename)).suffix or ".webm"
-        speaker_file = sample_path / f"recording_{number:03d}{extension}"
-        voice.save(speaker_file)
+        if voice is not None and voice.filename:
+            extension = Path(secure_filename(voice.filename)).suffix or ".webm"
+            speaker_file = sample_path / f"recording_{number:03d}{extension}"
+            voice.save(speaker_file)
+        elif saved_voice_id:
+            saved_voice = find_saved_voice(saved_voice_id)
+            if not saved_voice:
+                return jsonify(error="Saved voice was not found."), 400
+            speaker_file = saved_path / saved_voice["filename"]
+            if not speaker_file.exists():
+                return jsonify(error="Saved voice file is missing. Please re-save it."), 400
+        else:
+            return jsonify(error="A voice recording, uploaded reference file, or saved voice is required for cloning."), 400
 
         ref_text_raw = request.form.get("ref_text", "").strip() or None
         auto_tc = request.form.get("auto_transcribe", "").lower() in ("1", "on", "true", "yes")
@@ -291,6 +432,42 @@ def create_app(
             german=german_text,
             audio_url=f"/outputs/{output_file.name}",
         )
+
+    @app.get("/saved-voices")
+    def list_saved_voices():
+        return jsonify(items=load_saved_index())
+
+    @app.post("/saved-voices")
+    def save_voice():
+        name = request.form.get("name", "").strip()
+        voice = request.files.get("voice")
+        if not name:
+            return jsonify(error="Voice name is required."), 400
+        if voice is None or voice.filename == "":
+            return jsonify(error="Voice file is required."), 400
+
+        extension = Path(secure_filename(voice.filename)).suffix or ".webm"
+        voice_id = uuid4().hex
+        filename = f"{voice_id}{extension}"
+        voice.save(saved_path / filename)
+
+        items = load_saved_index()
+        items.append({"id": voice_id, "name": name, "filename": filename})
+        save_saved_index(items)
+        return jsonify(id=voice_id, name=name, filename=filename), 201
+
+    @app.delete("/saved-voices/<voice_id>")
+    def delete_saved_voice(voice_id: str):
+        items = load_saved_index()
+        item = next((i for i in items if i.get("id") == voice_id), None)
+        if item is None:
+            return jsonify(error="Saved voice was not found."), 404
+        voice_file = saved_path / item.get("filename", "")
+        if voice_file.exists():
+            voice_file.unlink()
+        remaining = [i for i in items if i.get("id") != voice_id]
+        save_saved_index(remaining)
+        return jsonify(ok=True)
 
     @app.get("/outputs/<path:filename>")
     def output_file(filename: str):
