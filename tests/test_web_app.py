@@ -17,6 +17,7 @@ def test_home_page_has_cloning_ui(tmp_path: Path) -> None:
     assert "Start recording" in html
     assert ".m4a" in html
     assert "English text" in html
+    assert "German (speak without translating)" in html
     assert "Generate German voice" in html
     assert "Qwen3-TTS" in html
     assert "Reference transcript" in html
@@ -38,6 +39,7 @@ def test_generate_with_voice_returns_audio_url(tmp_path: Path) -> None:
         *,
         ref_text: str | None = None,
         auto_transcribe_reference: bool = False,
+        asr_model: str | None = None,
     ) -> None:
         calls.append(
             {
@@ -46,6 +48,7 @@ def test_generate_with_voice_returns_audio_url(tmp_path: Path) -> None:
                 "out": output_path,
                 "ref_text": ref_text,
                 "auto": auto_transcribe_reference,
+                "asr_model": asr_model,
             }
         )
         output_path.write_bytes(b"fake-wav")
@@ -81,6 +84,64 @@ def test_generate_with_voice_returns_audio_url(tmp_path: Path) -> None:
     assert (tmp_path / "outputs" / "german_voice_001.wav").read_bytes() == b"fake-wav"
 
 
+def test_generate_with_german_text_skips_translation(tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_translate(text: str) -> str:
+        raise AssertionError(f"Translator should not run for German text: {text}")
+
+    def fake_synthesize(
+        german_text: str,
+        speaker_wav: Path,
+        output_path: Path,
+        *,
+        ref_text: str | None = None,
+        auto_transcribe_reference: bool = False,
+        asr_model: str | None = None,
+    ) -> None:
+        calls.append({"german": german_text, "asr_model": asr_model})
+        output_path.write_bytes(b"fake-wav")
+
+    app = create_app(
+        output_dir=tmp_path / "outputs",
+        sample_dir=tmp_path / "samples",
+        translator=fake_translate,
+        synthesizer=fake_synthesize,
+    )
+
+    response = app.test_client().post(
+        "/generate",
+        data={
+            "text": "Guten Morgen",
+            "text_language": "de",
+            "voice": (io.BytesIO(b"webm audio bytes"), "recording.webm"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload == {
+        "english": None,
+        "german": "Guten Morgen",
+        "audio_url": "/outputs/german_voice_001.wav",
+    }
+    assert calls == [{"german": "Guten Morgen", "asr_model": None}]
+
+
+def test_generate_rejects_unknown_text_language(tmp_path: Path) -> None:
+    app = create_app(output_dir=tmp_path / "outputs", sample_dir=tmp_path / "samples")
+
+    response = app.test_client().post(
+        "/generate",
+        data={"text": "Bonjour", "text_language": "fr"},
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 400
+    assert "Text language" in response.get_json()["error"]
+
+
 def test_generate_passes_ref_text_for_icl(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
@@ -94,8 +155,9 @@ def test_generate_passes_ref_text_for_icl(tmp_path: Path) -> None:
         *,
         ref_text: str | None = None,
         auto_transcribe_reference: bool = False,
+        asr_model: str | None = None,
     ) -> None:
-        calls.append({"ref_text": ref_text, "auto": auto_transcribe_reference})
+        calls.append({"ref_text": ref_text, "auto": auto_transcribe_reference, "asr_model": asr_model})
         output_path.write_bytes(b"x")
 
     app = create_app(
@@ -132,8 +194,9 @@ def test_generate_auto_transcribe_flag(tmp_path: Path) -> None:
         *,
         ref_text: str | None = None,
         auto_transcribe_reference: bool = False,
+        asr_model: str | None = None,
     ) -> None:
-        calls.append({"ref_text": ref_text, "auto": auto_transcribe_reference})
+        calls.append({"ref_text": ref_text, "auto": auto_transcribe_reference, "asr_model": asr_model})
         output_path.write_bytes(b"x")
 
     app = create_app(
@@ -174,7 +237,7 @@ def test_synthesize_uses_asr_when_auto(tmp_path: Path) -> None:
             with patch("soundfile.write") as sfw:
                 synthesize_german_voice("Hallo", speaker, out, auto_transcribe_reference=True)
 
-    tr.assert_called_once_with(speaker)
+    tr.assert_called_once_with(speaker, model_id=None)
     kw = mock_model.generate_voice_clone.call_args[1]
     assert kw["ref_text"] == "asr text"
     assert kw["x_vector_only_mode"] is False
@@ -192,6 +255,7 @@ def test_output_wav_is_served_after_generate(tmp_path: Path) -> None:
         *,
         ref_text: str | None = None,
         auto_transcribe_reference: bool = False,
+        asr_model: str | None = None,
     ) -> None:
         output_path.write_bytes(b"RIFF")
 
@@ -246,6 +310,7 @@ def test_generate_can_use_saved_voice_id(tmp_path: Path) -> None:
         *,
         ref_text: str | None = None,
         auto_transcribe_reference: bool = False,
+        asr_model: str | None = None,
     ) -> None:
         calls.append({"speaker": speaker_wav})
         output_path.write_bytes(b"ok")

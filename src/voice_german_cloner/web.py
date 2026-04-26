@@ -56,8 +56,8 @@ INDEX_HTML = """
 </head>
 <body>
 <main>
-  <h1>English → German in your voice</h1>
-  <p class="muted">Local English→German translation, then <strong><a href="https://github.com/QwenLM/Qwen3-TTS" style="color:#93c5fd;">Qwen3-TTS</a> Base</strong> voice clone. Optional: paste a transcript of your reference clip or use auto-transcribe (Whisper) for stronger ICL cloning. Without that, only the speaker embedding is used. GPU recommended.</p>
+  <h1>German voice in your voice</h1>
+  <p class="muted">Translate English→German locally, or enter German directly, then use <strong><a href="https://github.com/QwenLM/Qwen3-TTS" style="color:#93c5fd;">Qwen3-TTS</a> Base</strong> voice clone. Optional: paste a transcript of your reference clip or use auto-transcribe (Whisper) for stronger ICL cloning. Without that, only the speaker embedding is used. GPU recommended.</p>
 
   <section class="card">
     <h2>1. Voice sample (required)</h2>
@@ -111,8 +111,13 @@ INDEX_HTML = """
       <option value="openai/whisper-small">openai/whisper-small</option>
     </select>
 
-    <h2 style="margin-top:22px;">3. English text</h2>
-    <label for="text">English text</label>
+    <h2 style="margin-top:22px;">3. Text to speak</h2>
+    <label for="textLanguage">Text language</label>
+    <select id="textLanguage" name="text_language">
+      <option value="en" selected>English (translate to German)</option>
+      <option value="de">German (speak without translating)</option>
+    </select>
+    <label for="text" id="textLabel">English text</label>
     <textarea id="text" name="text" placeholder="Good morning, how are you?" required></textarea>
     <button class="primary" type="submit">Generate German voice</button>
   </form>
@@ -147,6 +152,19 @@ const saveCurrentVoiceBtn = document.getElementById('saveCurrentVoice');
 const savedVoiceSelect = document.getElementById('savedVoiceSelect');
 const refreshSavedVoicesBtn = document.getElementById('refreshSavedVoices');
 const deleteSavedVoiceBtn = document.getElementById('deleteSavedVoice');
+const textLanguage = document.getElementById('textLanguage');
+const textInput = document.getElementById('text');
+const textLabel = document.getElementById('textLabel');
+
+function updateTextLanguageCopy() {
+  if (textLanguage.value === 'de') {
+    textLabel.textContent = 'German text';
+    textInput.placeholder = 'Guten Morgen, wie geht es dir?';
+    return;
+  }
+  textLabel.textContent = 'English text';
+  textInput.placeholder = 'Good morning, how are you?';
+}
 
 function setSavedVoiceOptions(items) {
   savedVoiceSelect.innerHTML = '';
@@ -314,7 +332,8 @@ form.addEventListener('submit', async event => {
   }
 
   const data = new FormData();
-  data.append('text', document.getElementById('text').value);
+  data.append('text', textInput.value);
+  data.append('text_language', textLanguage.value);
   if (voiceForSubmit) {
     data.append('voice', voiceForSubmit.blob, voiceForSubmit.filename);
   } else if (savedVoiceId) {
@@ -332,7 +351,10 @@ form.addEventListener('submit', async event => {
     }
   }
 
-  statusEl.textContent = 'Translating and generating audio. First run can take several minutes while models download...';
+  statusEl.textContent =
+    textLanguage.value === 'de'
+      ? 'Generating audio from German text. First run can take several minutes while models download...'
+      : 'Translating and generating audio. First run can take several minutes while models download...';
   result.classList.add('hidden');
 
   try {
@@ -349,6 +371,8 @@ form.addEventListener('submit', async event => {
 });
 
 loadSavedVoices();
+textLanguage.addEventListener('change', updateTextLanguageCopy);
+updateTextLanguageCopy();
 </script>
 </body>
 </html>
@@ -399,12 +423,16 @@ def create_app(
 
     @app.post("/generate")
     def generate():
-        english = request.form.get("text", "").strip()
+        text = request.form.get("text", "").strip()
+        text_language = request.form.get("text_language", "en").strip().lower() or "en"
         voice = request.files.get("voice")
         saved_voice_id = request.form.get("saved_voice_id", "").strip()
 
-        if not english:
-            return jsonify(error="English text is required."), 400
+        if text_language not in {"en", "de"}:
+            return jsonify(error="Text language must be 'en' or 'de'."), 400
+        if not text:
+            required_language = "German" if text_language == "de" else "English"
+            return jsonify(error=f"{required_language} text is required."), 400
 
         number = next(counter)
         output_file = output_path / f"german_voice_{number:03d}.wav"
@@ -427,7 +455,7 @@ def create_app(
         asr_model = request.form.get("asr_model", "").strip() or None
 
         try:
-            german_text = translator(english)
+            german_text = text if text_language == "de" else translator(text)
             synthesizer(
                 german_text,
                 speaker_file,
@@ -440,7 +468,7 @@ def create_app(
             return jsonify(error=str(exc)), 500
 
         return jsonify(
-            english=english,
+            english=text if text_language == "en" else None,
             german=german_text,
             audio_url=f"/outputs/{output_file.name}",
         )

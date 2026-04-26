@@ -13,11 +13,17 @@ def run_once(
     speaker: Path,
     out: Path,
     *,
+    text_language: str = "en",
     ref_text: str | None = None,
     auto_transcribe_reference: bool = False,
 ) -> None:
-    german = translate_english_to_german(text)
-    print(f"English: {text}")
+    if text_language not in {"en", "de"}:
+        raise ValueError("text_language must be 'en' or 'de'.")
+    german = text.strip() if text_language == "de" else translate_english_to_german(text)
+    if text_language == "en":
+        print(f"English: {text}")
+    else:
+        print("German input: translation skipped.")
     print(f"German:  {german}")
     synthesize_german_voice(
         german,
@@ -33,6 +39,7 @@ def interactive_loop(
     speaker: Path,
     out_dir: Path,
     *,
+    text_language: str = "en",
     ref_text: str | None = None,
     auto_transcribe_reference: bool = False,
 ) -> None:
@@ -41,7 +48,8 @@ def interactive_loop(
     auto_env = os.environ.get("VOICER_AUTO_TRANSCRIBE", "").lower() in ("1", "true", "yes")
     use_auto = (auto_transcribe_reference or auto_env) and not ref_final
 
-    print("Enter English text. Press Ctrl+C or Ctrl+D to quit.")
+    prompt_language = "German" if text_language == "de" else "English"
+    print(f"Enter {prompt_language} text. Press Ctrl+C or Ctrl+D to quit.")
     if ref_final:
         print("ICL mode: fixed reference transcript (CLI / VOICER_REF_TEXT).")
     elif use_auto:
@@ -50,7 +58,7 @@ def interactive_loop(
     i = 1
     while True:
         try:
-            text = input("English> ").strip()
+            text = input(f"{prompt_language}> ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nBye.")
             return
@@ -61,6 +69,7 @@ def interactive_loop(
             text,
             speaker,
             out,
+            text_language=text_language,
             ref_text=ref_final,
             auto_transcribe_reference=use_auto,
         )
@@ -69,9 +78,15 @@ def interactive_loop(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Translate English to German locally, then speak German with Qwen3-TTS voice cloning."
+        description="Translate English to German locally, or speak German directly, with Qwen3-TTS voice cloning."
     )
-    parser.add_argument("--text", help="English text to translate and speak. Omit for interactive mode.")
+    parser.add_argument("--text", help="Text to speak. Omit for interactive mode.")
+    parser.add_argument(
+        "--text-language",
+        choices=("en", "de"),
+        default="en",
+        help="Language of --text/input: 'en' translates to German; 'de' speaks German directly.",
+    )
     parser.add_argument(
         "--speaker",
         required=True,
@@ -109,11 +124,19 @@ def main(argv: Optional[list[str]] = None) -> None:
     ref = (args.ref_text or "").strip() or None
     auto = bool(args.auto_transcribe_reference) and not ref
     if args.text:
-        run_once(args.text, args.speaker, args.out, ref_text=ref, auto_transcribe_reference=auto)
+        run_once(
+            args.text,
+            args.speaker,
+            args.out,
+            text_language=args.text_language,
+            ref_text=ref,
+            auto_transcribe_reference=auto,
+        )
     else:
         interactive_loop(
             args.speaker,
             args.out_dir,
+            text_language=args.text_language,
             ref_text=ref,
             auto_transcribe_reference=auto,
         )
