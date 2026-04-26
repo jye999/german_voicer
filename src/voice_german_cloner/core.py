@@ -52,6 +52,7 @@ def synthesize_german_voice(
     *,
     ref_text: str | None = None,
     auto_transcribe_reference: bool = False,
+    asr_model: str | None = None,
 ) -> None:
     """Speak German with Qwen3-TTS Base clone.
 
@@ -71,7 +72,7 @@ def synthesize_german_voice(
     if auto_transcribe_reference and not effective_ref:
         from .ref_audio_transcribe import transcribe_reference_audio
 
-        effective_ref = transcribe_reference_audio(speaker_wav).strip()
+        effective_ref = transcribe_reference_audio(speaker_wav, model_id=asr_model).strip()
 
     use_icl = bool(effective_ref)
 

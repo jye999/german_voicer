@@ -72,7 +72,7 @@ INDEX_HTML = """
 
     <p class="muted" style="margin-top: 22px;"><strong>Or record in the browser</strong> (localhost or HTTPS for the mic).</p>
     <p class="sample-read"><strong>Suggested script (read in your normal voice):</strong>
-    Last Thursday morning, I walked through our quiet neighborhood while the weather shifted from thick fog to bright sunshine. A neighbor waved, juggling books and a thermos, and we chatted briefly about travel plans for the spring. Birds were surprisingly loud down by the river path, and I remember thinking how peaceful it felt to rush nowhere in particular.</p>
+    Last Thursday morning, I walked through our quiet neighborhood as the weather shifted from fog to bright sunshine. A neighbor waved, and we chatted briefly about spring travel plans.</p>
     <button id="record" class="secondary" type="button">Start recording</button>
     <button id="stop" class="danger" type="button" disabled>Stop recording</button>
     <audio id="recordingPlayback" controls class="hidden"></audio>
@@ -104,6 +104,12 @@ INDEX_HTML = """
       <input type="checkbox" id="autoTranscribe" name="auto_transcribe" value="1" style="width:auto;margin-top:4px;">
       <span>Auto-transcribe reference with Whisper (English). Uses the first run to download the ASR model. Ignored if you filled the transcript above.</span>
     </label>
+    <label for="asrModel" style="margin-top:10px;">Whisper model (for Auto-transcribe)</label>
+    <select id="asrModel" name="asr_model">
+      <option value="openai/whisper-tiny" selected>openai/whisper-tiny (default, fastest)</option>
+      <option value="openai/whisper-base">openai/whisper-base</option>
+      <option value="openai/whisper-small">openai/whisper-small</option>
+    </select>
 
     <h2 style="margin-top:22px;">3. English text</h2>
     <label for="text">English text</label>
@@ -320,6 +326,10 @@ form.addEventListener('submit', async event => {
   }
   if (document.getElementById('autoTranscribe') && document.getElementById('autoTranscribe').checked) {
     data.append('auto_transcribe', '1');
+    const asrModelEl = document.getElementById('asrModel');
+    if (asrModelEl && asrModelEl.value) {
+      data.append('asr_model', asrModelEl.value);
+    }
   }
 
   statusEl.textContent = 'Translating and generating audio. First run can take several minutes while models download...';
@@ -414,6 +424,7 @@ def create_app(
 
         ref_text_raw = request.form.get("ref_text", "").strip() or None
         auto_tc = request.form.get("auto_transcribe", "").lower() in ("1", "on", "true", "yes")
+        asr_model = request.form.get("asr_model", "").strip() or None
 
         try:
             german_text = translator(english)
@@ -423,6 +434,7 @@ def create_app(
                 output_file,
                 ref_text=ref_text_raw,
                 auto_transcribe_reference=auto_tc,
+                asr_model=asr_model,
             )
         except Exception as exc:  # noqa: BLE001 - display error to local user
             return jsonify(error=str(exc)), 500

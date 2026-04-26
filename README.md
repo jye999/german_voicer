@@ -20,7 +20,7 @@ Only clone voices you **own** or have **explicit permission** to use.
 
 If both a manual transcript and auto-transcribe are sent, the **manual transcript wins** (Whisper is not run).
 
-**Auto-transcribe** runs **OpenAI Whisper** locally (`openai/whisper-base` by default). Override with **`WHISPER_ASR_MODEL`**. Best when the reference is **English** (e.g. the suggested script on the web page). Other languages may be wrong without a different Whisper model.
+**Auto-transcribe** runs **OpenAI Whisper** locally (`openai/whisper-tiny` by default). Override with **`WHISPER_ASR_MODEL`**. Best when the reference is **English** (e.g. the suggested script on the web page). Other languages may be wrong without a different Whisper model.
 
 Default TTS checkpoint: **`Qwen/Qwen3-TTS-12Hz-0.6B-Base`**. Override with **`QWEN3_TTS_MODEL`**.
 
@@ -74,6 +74,7 @@ uv run voice-german-web
 ```
 
 Bind: `0.0.0.0:7860` — open [http://127.0.0.1:7860](http://127.0.0.1:7860). A **voice sample is required** for first use. Optional **reference transcript** field and **Auto-transcribe** checkbox are in section 2 of the form.
+When Auto-transcribe is enabled in the web UI, you can choose Whisper `tiny`, `base`, or `small` in a dropdown (default is `tiny`).
 
 The web UI now includes a **Saved voices** section:
 
