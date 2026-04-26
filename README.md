@@ -1,6 +1,6 @@
-# Voice German Cloner
+# Multilingual Voice Cloner
 
-Translate **English → German** locally, or enter German directly, then speak the German text with **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)** **Base** voice cloning from a short reference clip.
+Translate selected language pairs locally, or enter target-language text directly, then speak the result with **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)** **Base** voice cloning from a short reference clip.
 
 ## Important consent note
 
@@ -8,8 +8,25 @@ Only clone voices you **own** or have **explicit permission** to use.
 
 ## How it works
 
-- **Text input** — choose English for local Marian translation (Helsinki-NLP `opus-mt-en-de`) or German to speak the text without translation.
-- **Speech** — `Qwen3TTSModel` **Base** (`generate_voice_clone`) with `language="German"` and your file as `ref_audio`.
+- **Text input** — choose one of the supported local Marian flows, or a direct same-language flow that skips translation.
+- **Speech** — `Qwen3TTSModel` **Base** (`generate_voice_clone`) with the selected target language and your file as `ref_audio`.
+
+### Supported language flows
+
+These flows are intentionally limited to pairs with explicit local Marian checkpoints and target languages that are a good fit for multilingual Qwen3-TTS usage:
+
+| Flow | Translation model |
+|------|-------------------|
+| English -> German | `Helsinki-NLP/opus-mt-en-de` |
+| German direct | none |
+| English -> Chinese | `Helsinki-NLP/opus-mt-en-zh` |
+| Chinese direct | none |
+| Spanish -> English | `Helsinki-NLP/opus-mt-es-en` |
+| English direct | none |
+| English -> Spanish | `Helsinki-NLP/opus-mt-en-es` |
+| Spanish direct | none |
+| German -> English | `Helsinki-NLP/opus-mt-de-en` |
+| Chinese -> English | `Helsinki-NLP/opus-mt-zh-en` |
 
 ### Cloning modes
 
@@ -29,7 +46,7 @@ Licensing: follow **Apache-2.0** for the [Qwen3-TTS](https://github.com/QwenLM/Q
 ## Project layout
 
 - `voice_samples/` — reference uploads from the web UI
-- `outputs/` — generated German speech
+- `outputs/` — generated speech
 - `src/voice_german_cloner/` — application code (`ref_audio_transcribe.py` = Whisper helper)
 
 ## Reference audio
@@ -73,7 +90,7 @@ Or:
 uv run voice-german-web
 ```
 
-Bind: `0.0.0.0:7860` — open [http://127.0.0.1:7860](http://127.0.0.1:7860). A **voice sample is required** for first use. In section 3, use **Text language** to choose English translation or German direct speech. Optional **reference transcript** field and **Auto-transcribe** checkbox are in section 2 of the form.
+Bind: `0.0.0.0:7860` — open [http://127.0.0.1:7860](http://127.0.0.1:7860). A **voice sample is required** for first use. In section 3, use **Language flow** to choose translation or direct speech. Optional **reference transcript** field and **Auto-transcribe** checkbox are in section 2 of the form.
 When Auto-transcribe is enabled in the web UI, you can choose Whisper `tiny`, `base`, or `small` in a dropdown (default is `tiny`).
 
 The web UI now includes a **Saved voices** section:
@@ -84,7 +101,7 @@ The web UI now includes a **Saved voices** section:
 
 ## Command-line mode
 
-Embedding-only (default):
+English -> German, embedding-only (default):
 
 ```bash
 uv run python -m voice_german_cloner --text "Good morning, how are you?" --speaker voice_samples/my_voice.wav --out outputs/german_voice.wav
@@ -100,8 +117,22 @@ uv run python -m voice_german_cloner --text "Good morning" --speaker voice_sampl
 Speak German text directly without translation:
 
 ```bash
-uv run python -m voice_german_cloner --text "Guten Morgen, wie geht es dir?" --text-language de \
+uv run python -m voice_german_cloner --text "Guten Morgen, wie geht es dir?" --language-flow de-de \
   --speaker voice_samples/my_voice.wav --out outputs/german_voice.wav
+```
+
+English -> Chinese:
+
+```bash
+uv run python -m voice_german_cloner --text "Good morning" --language-flow en-zh \
+  --speaker voice_samples/my_voice.wav --out outputs/chinese_voice.wav
+```
+
+Spanish -> English:
+
+```bash
+uv run python -m voice_german_cloner --text "Buenos dias" --language-flow es-en \
+  --speaker voice_samples/my_voice.wav --out outputs/english_voice.wav
 ```
 
 Whisper auto-transcribe (ICL, English reference):

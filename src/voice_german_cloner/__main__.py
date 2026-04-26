@@ -5,7 +5,8 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from .core import synthesize_german_voice, translate_english_to_german
+from .core import synthesize_voice, translate_text
+from .translation import language_name, supported_language_flows
 
 
 def run_once(
@@ -13,22 +14,27 @@ def run_once(
     speaker: Path,
     out: Path,
     *,
-    text_language: str = "en",
+    language_flow: str = "en-de",
     ref_text: str | None = None,
     auto_transcribe_reference: bool = False,
 ) -> None:
-    if text_language not in {"en", "de"}:
-        raise ValueError("text_language must be 'en' or 'de'.")
-    german = text.strip() if text_language == "de" else translate_english_to_german(text)
-    if text_language == "en":
-        print(f"English: {text}")
-    else:
-        print("German input: translation skipped.")
-    print(f"German:  {german}")
-    synthesize_german_voice(
-        german,
+    flow = supported_language_flows()[language_flow]
+    source_language = flow.source_language
+    target_language = flow.target_language
+    target_text = (
+        text.strip()
+        if source_language == target_language
+        else translate_text(text, source_language, target_language)
+    )
+    print(f"{language_name(source_language)}: {text}")
+    if source_language == target_language:
+        print("Translation skipped.")
+    print(f"{language_name(target_language)}: {target_text}")
+    synthesize_voice(
+        target_text,
         speaker,
         out,
+        language=language_name(target_language),
         ref_text=ref_text,
         auto_transcribe_reference=auto_transcribe_reference,
     )
@@ -39,16 +45,17 @@ def interactive_loop(
     speaker: Path,
     out_dir: Path,
     *,
-    text_language: str = "en",
+    language_flow: str = "en-de",
     ref_text: str | None = None,
     auto_transcribe_reference: bool = False,
 ) -> None:
     """Interactive mode. Env overrides: VOICER_REF_TEXT, VOICER_AUTO_TRANSCRIBE=1."""
+    flow = supported_language_flows()[language_flow]
     ref_final = (os.environ.get("VOICER_REF_TEXT", "").strip() or None) or (ref_text and ref_text.strip()) or None
     auto_env = os.environ.get("VOICER_AUTO_TRANSCRIBE", "").lower() in ("1", "true", "yes")
     use_auto = (auto_transcribe_reference or auto_env) and not ref_final
 
-    prompt_language = "German" if text_language == "de" else "English"
+    prompt_language = language_name(flow.source_language)
     print(f"Enter {prompt_language} text. Press Ctrl+C or Ctrl+D to quit.")
     if ref_final:
         print("ICL mode: fixed reference transcript (CLI / VOICER_REF_TEXT).")
@@ -64,12 +71,12 @@ def interactive_loop(
             return
         if not text:
             continue
-        out = out_dir / f"german_voice_{i:03d}.wav"
+        out = out_dir / f"voice_{flow.target_language}_{i:03d}.wav"
         run_once(
             text,
             speaker,
             out,
-            text_language=text_language,
+            language_flow=language_flow,
             ref_text=ref_final,
             auto_transcribe_reference=use_auto,
         )
@@ -78,14 +85,14 @@ def interactive_loop(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Translate English to German locally, or speak German directly, with Qwen3-TTS voice cloning."
+        description="Translate selected local language pairs, or speak directly, with Qwen3-TTS voice cloning."
     )
     parser.add_argument("--text", help="Text to speak. Omit for interactive mode.")
     parser.add_argument(
-        "--text-language",
-        choices=("en", "de"),
-        default="en",
-        help="Language of --text/input: 'en' translates to German; 'de' speaks German directly.",
+        "--language-flow",
+        choices=tuple(supported_language_flows()),
+        default="en-de",
+        help="Source/target flow. Same-language flows speak directly without translation.",
     )
     parser.add_argument(
         "--speaker",
@@ -107,7 +114,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path("outputs/german_voice.wav"),
+        default=Path("outputs/voice.wav"),
         help="Output WAV path for one-shot mode.",
     )
     parser.add_argument(
@@ -128,7 +135,7 @@ def main(argv: Optional[list[str]] = None) -> None:
             args.text,
             args.speaker,
             args.out,
-            text_language=args.text_language,
+            language_flow=args.language_flow,
             ref_text=ref,
             auto_transcribe_reference=auto,
         )
@@ -136,7 +143,7 @@ def main(argv: Optional[list[str]] = None) -> None:
         interactive_loop(
             args.speaker,
             args.out_dir,
-            text_language=args.text_language,
+            language_flow=args.language_flow,
             ref_text=ref,
             auto_transcribe_reference=auto,
         )

@@ -16,9 +16,12 @@ def test_home_page_has_cloning_ui(tmp_path: Path) -> None:
     html = response.get_data(as_text=True)
     assert "Start recording" in html
     assert ".m4a" in html
-    assert "English text" in html
-    assert "German (speak without translating)" in html
-    assert "Generate German voice" in html
+    assert "Language flow" in html
+    assert "English → German" in html
+    assert "English → Chinese" in html
+    assert "Spanish → English" in html
+    assert "German direct" in html
+    assert "Generate voice" in html
     assert "Qwen3-TTS" in html
     assert "Reference transcript" in html
     assert "Whisper" in html
@@ -28,22 +31,25 @@ def test_home_page_has_cloning_ui(tmp_path: Path) -> None:
 def test_generate_with_voice_returns_audio_url(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    def fake_translate(text: str) -> str:
+    def fake_translate(text: str, source_language: str, target_language: str) -> str:
         assert text == "Good morning"
+        assert (source_language, target_language) == ("en", "de")
         return "Guten Morgen"
 
     def fake_synthesize(
-        german_text: str,
+        target_text: str,
         speaker_wav: Path,
         output_path: Path,
         *,
+        language: str = "German",
         ref_text: str | None = None,
         auto_transcribe_reference: bool = False,
         asr_model: str | None = None,
     ) -> None:
         calls.append(
             {
-                "german": german_text,
+                "target_text": target_text,
+                "language": language,
                 "speaker": speaker_wav,
                 "out": output_path,
                 "ref_text": ref_text,
@@ -71,35 +77,178 @@ def test_generate_with_voice_returns_audio_url(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     payload = response.get_json()
-    assert payload == {
-        "english": "Good morning",
-        "german": "Guten Morgen",
-        "audio_url": "/outputs/german_voice_001.wav",
-    }
-    assert calls and calls[0]["german"] == "Guten Morgen"
+    assert payload["source_text"] == "Good morning"
+    assert payload["target_text"] == "Guten Morgen"
+    assert payload["source_language"] == "en"
+    assert payload["target_language"] == "de"
+    assert payload["target_language_name"] == "German"
+    assert payload["audio_url"] == "/outputs/voice_de_001.wav"
+    assert calls and calls[0]["target_text"] == "Guten Morgen"
+    assert calls[0]["language"] == "German"
     assert calls[0]["ref_text"] is None
     assert calls[0]["auto"] is False
     assert Path(calls[0]["speaker"]).exists()
     assert Path(calls[0]["speaker"]).suffix == ".webm"
-    assert (tmp_path / "outputs" / "german_voice_001.wav").read_bytes() == b"fake-wav"
+    assert (tmp_path / "outputs" / "voice_de_001.wav").read_bytes() == b"fake-wav"
 
 
-def test_generate_with_german_text_skips_translation(tmp_path: Path) -> None:
+def test_generate_direct_german_skips_translation(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    def fake_translate(text: str) -> str:
+    def fake_translate(text: str, source_language: str, target_language: str) -> str:
         raise AssertionError(f"Translator should not run for German text: {text}")
 
     def fake_synthesize(
-        german_text: str,
+        target_text: str,
         speaker_wav: Path,
         output_path: Path,
         *,
+        language: str = "German",
         ref_text: str | None = None,
         auto_transcribe_reference: bool = False,
         asr_model: str | None = None,
     ) -> None:
-        calls.append({"german": german_text, "asr_model": asr_model})
+        calls.append({"target_text": target_text, "language": language, "asr_model": asr_model})
+        output_path.write_bytes(b"fake-wav")
+
+    app = create_app(
+        output_dir=tmp_path / "outputs",
+        sample_dir=tmp_path / "samples",
+        translator=fake_translate,
+        synthesizer=fake_synthesize,
+    )
+
+    response = app.test_client().post(
+        "/generate",
+        data={
+            "text": "Guten Morgen",
+            "language_flow": "de-de",
+            "voice": (io.BytesIO(b"webm audio bytes"), "recording.webm"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["source_text"] == "Guten Morgen"
+    assert payload["target_text"] == "Guten Morgen"
+    assert payload["source_language"] == "de"
+    assert payload["target_language"] == "de"
+    assert payload["audio_url"] == "/outputs/voice_de_001.wav"
+    assert calls == [{"target_text": "Guten Morgen", "language": "German", "asr_model": None}]
+
+
+def test_generate_translates_english_to_chinese(tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_translate(text: str, source_language: str, target_language: str) -> str:
+        assert text == "Good morning"
+        assert (source_language, target_language) == ("en", "zh")
+        return "早上好"
+
+    def fake_synthesize(
+        target_text: str,
+        speaker_wav: Path,
+        output_path: Path,
+        *,
+        language: str = "German",
+        ref_text: str | None = None,
+        auto_transcribe_reference: bool = False,
+        asr_model: str | None = None,
+    ) -> None:
+        calls.append({"target_text": target_text, "language": language})
+        output_path.write_bytes(b"fake-wav")
+
+    app = create_app(
+        output_dir=tmp_path / "outputs",
+        sample_dir=tmp_path / "samples",
+        translator=fake_translate,
+        synthesizer=fake_synthesize,
+    )
+
+    response = app.test_client().post(
+        "/generate",
+        data={
+            "text": "Good morning",
+            "language_flow": "en-zh",
+            "voice": (io.BytesIO(b"webm audio bytes"), "recording.webm"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["target_text"] == "早上好"
+    assert payload["target_language"] == "zh"
+    assert payload["target_language_name"] == "Chinese"
+    assert payload["audio_url"] == "/outputs/voice_zh_001.wav"
+    assert calls == [{"target_text": "早上好", "language": "Chinese"}]
+
+
+def test_generate_translates_spanish_to_english(tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_translate(text: str, source_language: str, target_language: str) -> str:
+        assert text == "Buenos dias"
+        assert (source_language, target_language) == ("es", "en")
+        return "Good morning"
+
+    def fake_synthesize(
+        target_text: str,
+        speaker_wav: Path,
+        output_path: Path,
+        *,
+        language: str = "German",
+        ref_text: str | None = None,
+        auto_transcribe_reference: bool = False,
+        asr_model: str | None = None,
+    ) -> None:
+        calls.append({"target_text": target_text, "language": language})
+        output_path.write_bytes(b"fake-wav")
+
+    app = create_app(
+        output_dir=tmp_path / "outputs",
+        sample_dir=tmp_path / "samples",
+        translator=fake_translate,
+        synthesizer=fake_synthesize,
+    )
+
+    response = app.test_client().post(
+        "/generate",
+        data={
+            "text": "Buenos dias",
+            "language_flow": "es-en",
+            "voice": (io.BytesIO(b"webm audio bytes"), "recording.webm"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["target_text"] == "Good morning"
+    assert payload["target_language"] == "en"
+    assert payload["target_language_name"] == "English"
+    assert payload["audio_url"] == "/outputs/voice_en_001.wav"
+    assert calls == [{"target_text": "Good morning", "language": "English"}]
+
+
+def test_generate_supports_legacy_german_text_language(tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_translate(text: str, source_language: str, target_language: str) -> str:
+        raise AssertionError("Legacy German direct mode should not translate")
+
+    def fake_synthesize(
+        target_text: str,
+        speaker_wav: Path,
+        output_path: Path,
+        *,
+        language: str = "German",
+        ref_text: str | None = None,
+        auto_transcribe_reference: bool = False,
+        asr_model: str | None = None,
+    ) -> None:
+        calls.append({"target_text": target_text, "language": language})
         output_path.write_bytes(b"fake-wav")
 
     app = create_app(
@@ -121,38 +270,36 @@ def test_generate_with_german_text_skips_translation(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     payload = response.get_json()
-    assert payload == {
-        "english": None,
-        "german": "Guten Morgen",
-        "audio_url": "/outputs/german_voice_001.wav",
-    }
-    assert calls == [{"german": "Guten Morgen", "asr_model": None}]
+    assert payload["target_text"] == "Guten Morgen"
+    assert payload["language_flow"] == "German direct"
+    assert calls == [{"target_text": "Guten Morgen", "language": "German"}]
 
 
-def test_generate_rejects_unknown_text_language(tmp_path: Path) -> None:
+def test_generate_rejects_unknown_language_flow(tmp_path: Path) -> None:
     app = create_app(output_dir=tmp_path / "outputs", sample_dir=tmp_path / "samples")
 
     response = app.test_client().post(
         "/generate",
-        data={"text": "Bonjour", "text_language": "fr"},
+        data={"text": "Bonjour", "language_flow": "fr-en"},
         content_type="multipart/form-data",
     )
 
     assert response.status_code == 400
-    assert "Text language" in response.get_json()["error"]
+    assert "Language flow" in response.get_json()["error"]
 
 
 def test_generate_passes_ref_text_for_icl(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    def fake_translate(text: str) -> str:
+    def fake_translate(text: str, source_language: str, target_language: str) -> str:
         return "Hi"
 
     def fake_synthesize(
-        german_text: str,
+        target_text: str,
         speaker_wav: Path,
         output_path: Path,
         *,
+        language: str = "German",
         ref_text: str | None = None,
         auto_transcribe_reference: bool = False,
         asr_model: str | None = None,
@@ -184,14 +331,15 @@ def test_generate_passes_ref_text_for_icl(tmp_path: Path) -> None:
 def test_generate_auto_transcribe_flag(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    def fake_translate(text: str) -> str:
+    def fake_translate(text: str, source_language: str, target_language: str) -> str:
         return "Hi"
 
     def fake_synthesize(
-        german_text: str,
+        target_text: str,
         speaker_wav: Path,
         output_path: Path,
         *,
+        language: str = "German",
         ref_text: str | None = None,
         auto_transcribe_reference: bool = False,
         asr_model: str | None = None,
@@ -223,7 +371,7 @@ def test_generate_auto_transcribe_flag(tmp_path: Path) -> None:
 def test_synthesize_uses_asr_when_auto(tmp_path: Path) -> None:
     import numpy as np
 
-    from voice_german_cloner.core import synthesize_german_voice
+    from voice_german_cloner.core import synthesize_voice
 
     speaker = tmp_path / "ref.wav"
     speaker.write_bytes(b"fake")
@@ -235,24 +383,26 @@ def test_synthesize_uses_asr_when_auto(tmp_path: Path) -> None:
     with patch("voice_german_cloner.ref_audio_transcribe.transcribe_reference_audio", return_value="asr text") as tr:
         with patch("voice_german_cloner.core._qwen_clone_model", return_value=mock_model):
             with patch("soundfile.write") as sfw:
-                synthesize_german_voice("Hallo", speaker, out, auto_transcribe_reference=True)
+                synthesize_voice("Hallo", speaker, out, language="German", auto_transcribe_reference=True)
 
     tr.assert_called_once_with(speaker, model_id=None)
     kw = mock_model.generate_voice_clone.call_args[1]
     assert kw["ref_text"] == "asr text"
+    assert kw["language"] == "German"
     assert kw["x_vector_only_mode"] is False
     sfw.assert_called_once()
 
 
 def test_output_wav_is_served_after_generate(tmp_path: Path) -> None:
-    def fake_translate(text: str) -> str:
+    def fake_translate(text: str, source_language: str, target_language: str) -> str:
         return "Hallo"
 
     def fake_synthesize(
-        german_text: str,
+        target_text: str,
         speaker_wav: Path,
         output_path: Path,
         *,
+        language: str = "German",
         ref_text: str | None = None,
         auto_transcribe_reference: bool = False,
         asr_model: str | None = None,
@@ -300,14 +450,15 @@ def test_generate_requires_text_and_voice(tmp_path: Path) -> None:
 def test_generate_can_use_saved_voice_id(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
-    def fake_translate(text: str) -> str:
+    def fake_translate(text: str, source_language: str, target_language: str) -> str:
         return "Hallo"
 
     def fake_synthesize(
-        german_text: str,
+        target_text: str,
         speaker_wav: Path,
         output_path: Path,
         *,
+        language: str = "German",
         ref_text: str | None = None,
         auto_transcribe_reference: bool = False,
         asr_model: str | None = None,
