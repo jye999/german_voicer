@@ -1,52 +1,59 @@
 # Voice German Cloner
 
-Type English text, translate it to German, then speak the German text using your voice from a reference audio sample.
+Translate **English → German** locally, then speak the German text with **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)** **Base** voice cloning from a short reference clip.
 
 ## Important consent note
-Only clone voices you own or have explicit permission to use.
+
+Only clone voices you **own** or have **explicit permission** to use.
+
+## How it works
+
+- **Translation** — local Marian model (Helsinki-NLP `opus-mt-en-de` via `transformers`, pulled in with `qwen-tts`).
+- **Speech** — `Qwen3TTSModel` **Base** (`generate_voice_clone`) with `language="German"` and your file as `ref_audio`.
+
+### Cloning modes
+
+| Mode | When | Qwen settings |
+|------|------|----------------|
+| **Embedding-only** (default) | No transcript and auto-transcribe off | `x_vector_only_mode=True` (no `ref_text`; timbre from audio only) |
+| **ICL (stronger match)** | You paste the **exact words** you said in the reference clip, **or** you enable **auto-transcribe** | `ref_text` set, `x_vector_only_mode=False` |
+
+If both a manual transcript and auto-transcribe are sent, the **manual transcript wins** (Whisper is not run).
+
+**Auto-transcribe** runs **OpenAI Whisper** locally (`openai/whisper-base` by default). Override with **`WHISPER_ASR_MODEL`**. Best when the reference is **English** (e.g. the suggested script on the web page). Other languages may be wrong without a different Whisper model.
+
+Default TTS checkpoint: **`Qwen/Qwen3-TTS-12Hz-0.6B-Base`**. Override with **`QWEN3_TTS_MODEL`**.
+
+Licensing: follow **Apache-2.0** for the [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) code and the **model license** on Hugging Face for the weights you use.
 
 ## Project layout
 
-- `voice_samples/` — put your reference voice recording here, e.g. `my_voice.wav`
-- `outputs/` — generated German speech files go here
-- `src/voice_german_cloner/` — app code
+- `voice_samples/` — reference uploads from the web UI
+- `outputs/` — generated German speech
+- `src/voice_german_cloner/` — application code (`ref_audio_transcribe.py` = Whisper helper)
 
-## Recommended reference audio
+## Reference audio
 
-Use a clean WAV/MP3 recording of your voice:
-- 10–30 seconds is enough for XTTS-style cloning
-- no background music/noise
-- only your voice
-- normal speaking voice
+Use a clean **WAV / MP3 / M4A** clip, about **10–30 seconds**, solo voice, minimal noise. For ICL, the transcript should match that clip. **ffmpeg** may help `librosa` decode some formats if decoding fails.
 
 ## Setup (uv)
 
-[uv](https://docs.astral.sh/uv/) manages the virtualenv and installs this package from `pyproject.toml` (with `src/` on the path). The repo includes a `uv.lock` for reproducible installs.
-
 ```bash
-cd ~/voice-german-cloner
+cd ~/german_voicer
 uv sync
 ```
 
-Optional dev tools (e.g. pytest):
+Dev (pytest):
 
 ```bash
 uv sync --extra dev
 ```
 
-`TTS` requires Python `<3.12`. A `.python-version` file pins **3.11** for uv; override with e.g. `uv python pin 3.10` if you prefer 3.10.
+This project pins **Python 3.10–3.11** (see `.python-version`).
 
-### Without uv
+### GPU
 
-```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-pip install -r requirements.txt
-```
-
-(`pip install -e .` is required so `python -m voice_german_cloner` resolves the package from `src/`.)
-
+Qwen3-TTS is intended for **CUDA**; CPU is slow. The app uses **`sdpa`** attention (no FlashAttention build required). Prefer the default **0.6B Base** model if VRAM is tight.
 
 ## Web interface
 
@@ -54,41 +61,41 @@ pip install -r requirements.txt
 uv run python -m voice_german_cloner.web
 ```
 
-Or the script entry point:
+Or:
 
 ```bash
 uv run voice-german-web
 ```
 
-The server binds to **all interfaces** (`0.0.0.0:7860`). On this machine open [http://127.0.0.1:7860](http://127.0.0.1:7860); from another device on your LAN use `http://<this-hosts-ip>:7860`.
-
-The web page lets you:
-- record your voice in the browser
-- play back the recording
-- enter English text
-- translate it to German
-- generate and play the German audio in your recorded voice
-
-Note: microphone access from the browser usually requires `localhost` / `127.0.0.1` or **HTTPS**. If you open the app by raw IP or hostname, the browser may refuse the mic unless you terminate TLS in front of the app or use a secure context.
+Bind: `0.0.0.0:7860` — open [http://127.0.0.1:7860](http://127.0.0.1:7860). A **voice sample is required**. Optional **reference transcript** field and **Auto-transcribe** checkbox are in section 2 of the form.
 
 ## Command-line mode
+
+Embedding-only (default):
 
 ```bash
 uv run python -m voice_german_cloner --text "Good morning, how are you?" --speaker voice_samples/my_voice.wav --out outputs/german_voice.wav
 ```
 
-Or interactive mode:
+With transcript (ICL):
 
 ```bash
-uv run python -m voice_german_cloner --speaker voice_samples/my_voice.wav
+uv run python -m voice_german_cloner --text "Good morning" --speaker voice_samples/my_voice.wav --out out.wav \
+  --ref-text "Exact words spoken in my_voice.wav"
 ```
 
-(`uv run voice-german-cloner ...` works the same as `uv run python -m voice_german_cloner ...`.)
+Whisper auto-transcribe (ICL, English reference):
 
-## Notes
+```bash
+uv run python -m voice_german_cloner --text "Good morning" --speaker voice_samples/my_voice.wav --out out.wav \
+  --auto-transcribe-reference
+```
 
-This scaffold uses:
-- `deep-translator` for English → German translation using Google Translate
-- Coqui `TTS` with XTTS v2 for multilingual voice cloning
+Interactive mode supports env overrides:
 
-The first run downloads the TTS model and can take a while.
+- **`VOICER_REF_TEXT`** — fixed transcript for every line (ICL).
+- **`VOICER_AUTO_TRANSCRIBE=1`** — run Whisper on each generation (slow on CPU).
+
+## Upstream
+
+Track [Qwen3-TTS releases](https://github.com/QwenLM/Qwen3-TTS); `qwen-tts` pins `transformers` and may need updates over time.

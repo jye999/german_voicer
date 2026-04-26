@@ -5,13 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "voice-german-cloner"
 version = "0.1.0"
-description = "Translate English text to German and speak it using a cloned reference voice."
+description = "Translate English to German locally, then speak German with Qwen3-TTS voice cloning."
 requires-python = ">=3.10,<3.12"
 dependencies = [
-  "deep-translator>=1.11.4",
-  "TTS>=0.22.0",
+  "qwen-tts>=0.1.1",
+  "librosa>=0.10.1",
   "soundfile>=0.12.1",
   "Flask>=3.0.0",
+  "sentencepiece>=0.1.99",
 ]
 
 [project.optional-dependencies]
@@ -23,3 +24,7 @@ voice-german-web = "voice_german_cloner.web:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
