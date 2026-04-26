@@ -90,7 +90,7 @@ Or:
 uv run voice-german-web
 ```
 
-Bind: `0.0.0.0:7860` — open [http://127.0.0.1:7860](http://127.0.0.1:7860). A **voice sample is required** for first use. In section 3, use **Language flow** to choose translation or direct speech. Optional **reference transcript** field and **Auto-transcribe** checkbox are in section 2 of the form.
+Bind: `0.0.0.0:7860` — open [http://127.0.0.1:7860](http://127.0.0.1:7860). A **voice sample is required** for first use. In section 3, choose **Source language** and **Target voice language** to translate or speak directly. Optional **reference transcript** field and **Auto-transcribe** checkbox are in section 2 of the form.
 When Auto-transcribe is enabled in the web UI, you can choose Whisper `tiny`, `base`, or `small` in a dropdown (default is `tiny`).
 
 The web UI now includes a **Saved voices** section:

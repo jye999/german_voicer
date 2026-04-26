@@ -113,19 +113,22 @@ INDEX_HTML = """
     </select>
 
     <h2 style="margin-top:22px;">3. Text to speak</h2>
-    <label for="languageFlow">Language flow</label>
-    <select id="languageFlow" name="language_flow">
-      <option value="en-de" selected>English → German</option>
-      <option value="de-de">German direct (no translation)</option>
-      <option value="en-zh">English → Chinese</option>
-      <option value="zh-zh">Chinese direct (no translation)</option>
-      <option value="es-en">Spanish → English</option>
-      <option value="en-en">English direct (no translation)</option>
-      <option value="en-es">English → Spanish</option>
-      <option value="es-es">Spanish direct (no translation)</option>
-      <option value="de-en">German → English</option>
-      <option value="zh-en">Chinese → English</option>
-    </select>
+    <div class="row">
+      <div>
+        <label for="sourceLanguage" style="margin-top:0;">Source language</label>
+        <select id="sourceLanguage" name="source_language">
+          <option value="en" selected>English</option>
+          <option value="de">German</option>
+          <option value="zh">Chinese</option>
+          <option value="es">Spanish</option>
+        </select>
+      </div>
+      <div>
+        <label for="targetLanguage" style="margin-top:0;">Target voice language</label>
+        <select id="targetLanguage" name="target_language"></select>
+      </div>
+    </div>
+    <p id="languageHint" class="muted" style="margin:10px 0 0;">English → German</p>
     <label for="text" id="textLabel">English text</label>
     <textarea id="text" name="text" placeholder="Good morning, how are you?" required></textarea>
     <button class="primary" type="submit">Generate voice</button>
@@ -162,27 +165,56 @@ const saveCurrentVoiceBtn = document.getElementById('saveCurrentVoice');
 const savedVoiceSelect = document.getElementById('savedVoiceSelect');
 const refreshSavedVoicesBtn = document.getElementById('refreshSavedVoices');
 const deleteSavedVoiceBtn = document.getElementById('deleteSavedVoice');
-const languageFlow = document.getElementById('languageFlow');
+const sourceLanguage = document.getElementById('sourceLanguage');
+const targetLanguage = document.getElementById('targetLanguage');
+const languageHint = document.getElementById('languageHint');
 const textInput = document.getElementById('text');
 const textLabel = document.getElementById('textLabel');
 
-const flowCopy = {
-  'en-de': ['English text', 'Good morning, how are you?'],
-  'de-de': ['German text', 'Guten Morgen, wie geht es dir?'],
-  'en-zh': ['English text', 'Good morning, how are you?'],
-  'zh-zh': ['Chinese text', '早上好，你好吗？'],
-  'es-en': ['Spanish text', 'Buenos dias, como estas?'],
-  'en-en': ['English text', 'Good morning, how are you?'],
-  'en-es': ['English text', 'Good morning, how are you?'],
-  'es-es': ['Spanish text', 'Buenos dias, como estas?'],
-  'de-en': ['German text', 'Guten Morgen, wie geht es dir?'],
-  'zh-en': ['Chinese text', '早上好，你好吗？'],
+const languageNames = {
+  en: 'English',
+  de: 'German',
+  zh: 'Chinese',
+  es: 'Spanish',
 };
 
-function updateLanguageFlowCopy() {
-  const copy = flowCopy[languageFlow.value] || flowCopy['en-de'];
+const supportedTargets = {
+  en: ['de', 'zh', 'en', 'es'],
+  de: ['de', 'en'],
+  zh: ['zh', 'en'],
+  es: ['en', 'es'],
+};
+
+const sourceCopy = {
+  en: ['English text', 'Good morning, how are you?'],
+  de: ['German text', 'Guten Morgen, wie geht es dir?'],
+  zh: ['Chinese text', '早上好，你好吗？'],
+  es: ['Spanish text', 'Buenos dias, como estas?'],
+};
+
+function updateLanguageSelectors() {
+  const source = sourceLanguage.value;
+  const previousTarget = targetLanguage.value;
+  const targets = supportedTargets[source] || [];
+  targetLanguage.innerHTML = '';
+  for (const target of targets) {
+    const option = document.createElement('option');
+    option.value = target;
+    option.textContent =
+      source === target
+        ? languageNames[target] + ' direct (no translation)'
+        : languageNames[target];
+    targetLanguage.appendChild(option);
+  }
+  targetLanguage.value = targets.includes(previousTarget) ? previousTarget : targets[0];
+  const copy = sourceCopy[source] || sourceCopy.en;
   textLabel.textContent = copy[0];
   textInput.placeholder = copy[1];
+  const target = targetLanguage.value;
+  languageHint.textContent =
+    source === target
+      ? languageNames[target] + ' direct (no translation)'
+      : languageNames[source] + ' → ' + languageNames[target];
 }
 
 function setSavedVoiceOptions(items) {
@@ -352,7 +384,9 @@ form.addEventListener('submit', async event => {
 
   const data = new FormData();
   data.append('text', textInput.value);
-  data.append('language_flow', languageFlow.value);
+  data.append('source_language', sourceLanguage.value);
+  data.append('target_language', targetLanguage.value);
+  data.append('language_flow', sourceLanguage.value + '-' + targetLanguage.value);
   if (voiceForSubmit) {
     data.append('voice', voiceForSubmit.blob, voiceForSubmit.filename);
   } else if (savedVoiceId) {
@@ -370,7 +404,7 @@ form.addEventListener('submit', async event => {
     }
   }
 
-  const isDirect = languageFlow.value.split('-')[0] === languageFlow.value.split('-')[1];
+  const isDirect = sourceLanguage.value === targetLanguage.value;
   statusEl.textContent =
     isDirect
       ? 'Generating audio directly. First run can take several minutes while models download...'
@@ -392,8 +426,9 @@ form.addEventListener('submit', async event => {
 });
 
 loadSavedVoices();
-languageFlow.addEventListener('change', updateLanguageFlowCopy);
-updateLanguageFlowCopy();
+sourceLanguage.addEventListener('change', updateLanguageSelectors);
+targetLanguage.addEventListener('change', updateLanguageSelectors);
+updateLanguageSelectors();
 </script>
 </body>
 </html>
@@ -437,6 +472,19 @@ def create_app(
         return None
 
     def resolve_language_flow() -> tuple[str, str, str]:
+        source_language = request.form.get("source_language", "").strip().lower()
+        target_language = request.form.get("target_language", "").strip().lower()
+        if source_language or target_language:
+            language_flow = f"{source_language}-{target_language}"
+            try:
+                flow = LANGUAGE_FLOWS[language_flow]
+                return flow.source_language, flow.target_language, flow.label
+            except KeyError as exc:
+                supported = ", ".join(LANGUAGE_FLOWS)
+                raise ValueError(
+                    f"Language pair must be one of the supported flows: {supported}."
+                ) from exc
+
         language_flow = request.form.get("language_flow", "").strip().lower()
         if not language_flow:
             # Backward compatibility for the earlier English/German-only form.

@@ -16,11 +16,13 @@ def test_home_page_has_cloning_ui(tmp_path: Path) -> None:
     html = response.get_data(as_text=True)
     assert "Start recording" in html
     assert ".m4a" in html
-    assert "Language flow" in html
-    assert "English → German" in html
-    assert "English → Chinese" in html
-    assert "Spanish → English" in html
-    assert "German direct" in html
+    assert "Source language" in html
+    assert "Target voice language" in html
+    assert "English" in html
+    assert "Chinese" in html
+    assert "Spanish" in html
+    assert "German" in html
+    assert "supportedTargets" in html
     assert "Generate voice" in html
     assert "Qwen3-TTS" in html
     assert "Reference transcript" in html
@@ -170,7 +172,8 @@ def test_generate_translates_english_to_chinese(tmp_path: Path) -> None:
         "/generate",
         data={
             "text": "Good morning",
-            "language_flow": "en-zh",
+            "source_language": "en",
+            "target_language": "zh",
             "voice": (io.BytesIO(b"webm audio bytes"), "recording.webm"),
         },
         content_type="multipart/form-data",
@@ -217,7 +220,8 @@ def test_generate_translates_spanish_to_english(tmp_path: Path) -> None:
         "/generate",
         data={
             "text": "Buenos dias",
-            "language_flow": "es-en",
+            "source_language": "es",
+            "target_language": "en",
             "voice": (io.BytesIO(b"webm audio bytes"), "recording.webm"),
         },
         content_type="multipart/form-data",
@@ -230,6 +234,23 @@ def test_generate_translates_spanish_to_english(tmp_path: Path) -> None:
     assert payload["target_language_name"] == "English"
     assert payload["audio_url"] == "/outputs/voice_en_001.wav"
     assert calls == [{"target_text": "Good morning", "language": "English"}]
+
+
+def test_generate_rejects_unsupported_source_target_pair(tmp_path: Path) -> None:
+    app = create_app(output_dir=tmp_path / "outputs", sample_dir=tmp_path / "samples")
+
+    response = app.test_client().post(
+        "/generate",
+        data={
+            "text": "Hola",
+            "source_language": "es",
+            "target_language": "zh",
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 400
+    assert "Language pair" in response.get_json()["error"]
 
 
 def test_generate_supports_legacy_german_text_language(tmp_path: Path) -> None:
