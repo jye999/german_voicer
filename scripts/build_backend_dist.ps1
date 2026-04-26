@@ -9,11 +9,14 @@ if (Test-Path $DistDir) {
 }
 New-Item -ItemType Directory -Path $DistDir | Out-Null
 
-if (-not (Get-Command pyinstaller -ErrorAction SilentlyContinue)) {
-  throw "pyinstaller not found. Install with: uv pip install pyinstaller"
+if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+  throw "uv not found. Install from https://github.com/astral-sh/uv"
 }
 
-pyinstaller `
+Set-Location $RootDir
+uv sync --extra bundle
+
+uv run pyinstaller `
   --noconfirm `
   --onefile `
   --name voice-german-backend `

@@ -114,14 +114,14 @@ The project now includes a desktop shell in [`desktop/`](desktop/) that launches
 Linux/macOS shell:
 
 ```bash
-uv pip install pyinstaller
 ./scripts/build_backend_dist.sh
 ```
+
+(`uv sync --extra bundle` runs inside the script so PyInstaller is installed into the project environment.)
 
 Windows PowerShell:
 
 ```powershell
-uv pip install pyinstaller
 ./scripts/build_backend_dist.ps1
 ```
 

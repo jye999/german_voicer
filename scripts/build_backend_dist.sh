@@ -8,12 +8,15 @@ echo "Building backend bundle into: $DIST_DIR"
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
-if ! command -v pyinstaller >/dev/null 2>&1; then
-  echo "pyinstaller not found. Install with: uv pip install pyinstaller"
+if ! command -v uv >/dev/null 2>&1; then
+  echo "uv not found. Install from https://github.com/astral-sh/uv"
   exit 1
 fi
 
-pyinstaller \
+cd "$ROOT_DIR"
+uv sync --extra bundle
+
+uv run pyinstaller \
   --noconfirm \
   --onefile \
   --name voice-german-backend \

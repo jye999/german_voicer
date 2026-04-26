@@ -18,6 +18,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0"]
+bundle = ["pyinstaller>=6.0.0"]
 
 [project.scripts]
 voice-german-cloner = "voice_german_cloner.__main__:main"

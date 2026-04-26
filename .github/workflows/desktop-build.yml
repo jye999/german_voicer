@@ -40,17 +40,13 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
           df -h
 
-      - uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: pyproject.toml
+          version: "latest"
 
-      - name: Install Python deps + PyInstaller
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e .
-          pip install pyinstaller
+      - name: Sync Python environment (app + PyInstaller)
+        run: uv sync --extra bundle
 
       - name: Install Linux system packages (Tauri + native libs)
         if: runner.os == 'Linux'
