@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import threading
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
@@ -24,123 +25,159 @@ INDEX_HTML = """
   <title>Multilingual Voice Cloner</title>
   <style>
     :root { color-scheme: dark; font-family: system-ui, -apple-system, sans-serif; }
-    body { margin: 0; min-height: 100vh; background: #111827; color: #f9fafb; display: grid; place-items: center; }
-    main { width: min(760px, calc(100% - 32px)); background: #1f2937; border: 1px solid #374151; border-radius: 18px; padding: 28px; box-shadow: 0 20px 60px #0008; }
-    h1 { margin-top: 0; }
-    label { display: block; margin: 18px 0 8px; font-weight: 700; }
-    textarea { width: 100%; min-height: 130px; border-radius: 12px; border: 1px solid #4b5563; background: #111827; color: #f9fafb; padding: 12px; font-size: 16px; box-sizing: border-box; }
-    button { border: 0; border-radius: 999px; padding: 12px 18px; margin: 8px 8px 8px 0; font-weight: 700; cursor: pointer; }
+    body { margin: 0; min-height: 100vh; background: #111827; color: #f9fafb; display: grid; place-items: center; padding: 12px; box-sizing: border-box; }
+    main { width: min(1180px, calc(100% - 8px)); height: calc(100vh - 24px); background: #1f2937; border: 1px solid #374151; border-radius: 18px; padding: 16px; box-shadow: 0 20px 60px #0008; display: grid; grid-template-rows: auto 1fr auto; gap: 12px; overflow: hidden; }
+    h1 { margin: 0; font-size: 1.5rem; }
+    h2 { margin: 0 0 8px; font-size: 1.05rem; }
+    h3 { margin: 0 0 8px; font-size: 0.98rem; }
+    label { display: block; margin: 10px 0 6px; font-weight: 700; }
+    textarea { width: 100%; min-height: 120px; border-radius: 12px; border: 1px solid #4b5563; background: #111827; color: #f9fafb; padding: 12px; font-size: 15px; box-sizing: border-box; }
+    #text { min-height: 160px; max-height: 260px; resize: vertical; }
+    #refText { min-height: 82px; max-height: 140px; resize: vertical; }
+    button { border: 0; border-radius: 999px; padding: 10px 16px; margin: 6px 6px 6px 0; font-weight: 700; cursor: pointer; }
     .primary { background: #22c55e; color: #052e16; }
     .secondary { background: #60a5fa; color: #082f49; }
     .danger { background: #f87171; color: #450a0a; }
     .muted { color: #9ca3af; }
-    audio { width: 100%; margin-top: 10px; }
-    .card { margin-top: 18px; padding: 16px; background: #111827; border-radius: 12px; border: 1px solid #374151; }
+    audio { width: 100%; margin-top: 8px; }
+    .card { padding: 12px; background: #111827; border-radius: 12px; border: 1px solid #374151; }
     .hidden { display: none; }
-    #status { min-height: 24px; }
-    .sample-read { margin-top: 14px; padding: 12px 14px; border-left: 3px solid #4b5563; background: #0f172a; border-radius: 0 10px 10px 0; font-size: 15px; line-height: 1.55; color: #d1d5db; }
+    #status { min-height: 22px; margin: 0; }
+    .sample-read { margin-top: 8px; padding: 10px 12px; border-left: 3px solid #4b5563; background: #0f172a; border-radius: 0 10px 10px 0; font-size: 14px; line-height: 1.45; color: #d1d5db; }
     .sample-read strong { color: #e5e7eb; }
-    .upload-box { margin-top: 8px; padding: 16px; border: 2px dashed #60a5fa; border-radius: 14px; background: #111827; }
-    .upload-box h3 { margin: 0 0 10px; font-size: 1.05rem; color: #f9fafb; }
+    .upload-box { margin-top: 6px; padding: 12px; border: 2px dashed #60a5fa; border-radius: 14px; background: #111827; }
+    .upload-box h3 { margin: 0 0 6px; color: #f9fafb; }
     .upload-box .hint { margin: 0 0 12px; font-size: 14px; color: #9ca3af; }
     #voiceFile { display: block; width: 100%; max-width: 100%; padding: 8px 0; font-size: 15px; color: #e5e7eb; }
     #voiceFile::file-selector-button,
     #voiceFile::-webkit-file-upload-button {
       background: #60a5fa; color: #082f49; border: 0; border-radius: 999px; padding: 10px 20px; font-weight: 700; cursor: pointer; margin-right: 14px;
     }
-    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
     select, input[type="text"] {
       border-radius: 10px; border: 1px solid #4b5563; background: #111827; color: #f9fafb; padding: 10px; font-size: 14px;
     }
     #savedVoiceSelect { min-width: 260px; }
+    .app-header { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+    .app-header p { margin: 0; max-width: 72ch; font-size: 14px; }
+    .workspace { min-height: 0; display: grid; grid-template-columns: 0.92fr 1.08fr; gap: 12px; }
+    .pane { min-height: 0; overflow: auto; display: grid; gap: 10px; align-content: start; }
+    .action-bar { border-top: 1px solid #374151; padding-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    details.card > summary { cursor: pointer; font-weight: 700; }
+    details.card[open] > summary { margin-bottom: 8px; }
+    @media (max-width: 980px) {
+      main { height: auto; min-height: calc(100vh - 24px); }
+      .workspace { grid-template-columns: 1fr; }
+      .pane { overflow: visible; }
+      .action-bar { flex-direction: column; align-items: flex-start; }
+    }
   </style>
 </head>
 <body>
 <main>
-  <h1>Multilingual voice in your voice</h1>
-  <p class="muted">Translate between selected local language pairs, or enter target-language text directly, then use <strong><a href="https://github.com/QwenLM/Qwen3-TTS" style="color:#93c5fd;">Qwen3-TTS</a> Base</strong> voice clone. Optional: paste a transcript of your reference clip or use auto-transcribe (Whisper) for stronger ICL cloning. Without that, only the speaker embedding is used. GPU recommended.</p>
+  <header class="app-header">
+    <h1>Multilingual voice in your voice</h1>
+    <p class="muted">Translate between selected local language pairs, or use direct target-language input with <strong><a href="https://github.com/QwenLM/Qwen3-TTS" style="color:#93c5fd;">Qwen3-TTS</a></strong>. Optional transcript/auto-transcribe can improve match.</p>
+  </header>
 
-  <section class="card">
-    <h2>1. Voice sample (required)</h2>
-    <p class="muted">About 10–30 seconds, clean speech, no music. Upload <strong>or</strong> record in the browser.</p>
+  <div class="workspace">
+    <section class="pane">
+      <section class="card">
+        <h2>1. Voice sample (required)</h2>
+        <p class="muted" style="margin:0 0 8px;">About 10–30 seconds, clean speech, no music.</p>
 
-    <div class="upload-box">
-      <h3>Upload reference audio</h3>
-      <p class="hint"><strong>WAV</strong>, <strong>MP3</strong>, or <strong>M4A</strong> of your voice.</p>
-      <input id="voiceFile" type="file" accept=".wav,.mp3,.m4a,audio/wav,audio/wave,audio/x-wav,audio/mpeg,audio/mp3,audio/mp4,audio/x-m4a">
-      <audio id="uploadPlayback" controls class="hidden"></audio>
-    </div>
+        <div class="upload-box">
+          <h3>Upload reference audio</h3>
+          <p class="hint"><strong>WAV</strong>, <strong>MP3</strong>, or <strong>M4A</strong> of your voice.</p>
+          <input id="voiceFile" type="file" accept=".wav,.mp3,.m4a,audio/wav,audio/wave,audio/x-wav,audio/mpeg,audio/mp3,audio/mp4,audio/x-m4a">
+          <audio id="uploadPlayback" controls class="hidden"></audio>
+        </div>
 
-    <p class="muted" style="margin-top: 22px;"><strong>Or record in the browser</strong> (localhost or HTTPS for the mic).</p>
-    <p class="sample-read"><strong>Suggested script (read in your normal voice):</strong>
-    Last Thursday morning, I walked through our quiet neighborhood as the weather shifted from fog to bright sunshine. A neighbor waved, and we chatted briefly about spring travel plans.</p>
-    <button id="record" class="secondary" type="button">Start recording</button>
-    <button id="stop" class="danger" type="button" disabled>Stop recording</button>
-    <audio id="recordingPlayback" controls class="hidden"></audio>
+        <p class="muted" style="margin:10px 0 0;"><strong>Or record in the browser</strong> (localhost or HTTPS for the mic).</p>
+        <p class="sample-read"><strong>Suggested script:</strong> Last Thursday morning, I walked through our quiet neighborhood as the weather shifted from fog to bright sunshine. A neighbor waved, and we chatted briefly about spring travel plans.</p>
+        <div class="row">
+          <button id="record" class="secondary" type="button">Start recording</button>
+          <button id="stop" class="danger" type="button" disabled>Stop recording</button>
+        </div>
+        <audio id="recordingPlayback" controls class="hidden"></audio>
+      </section>
 
-    <div class="card" style="margin-top:16px;">
-      <h3 style="margin:0 0 10px;">Saved voices</h3>
-      <p class="muted" style="margin-top:0;">Save your current uploaded/recorded sample once, then reuse it later.</p>
-      <div class="row">
-        <input id="saveVoiceName" type="text" placeholder="Voice name (e.g. My Desk Mic)">
-        <button id="saveCurrentVoice" class="secondary" type="button">Save current sample</button>
-      </div>
-      <div class="row">
-        <select id="savedVoiceSelect">
-          <option value="">No saved voice selected</option>
+      <section class="card">
+        <h2>Saved voices</h2>
+        <p class="muted" style="margin:0 0 8px;">Save once and reuse later.</p>
+        <div class="row">
+          <input id="saveVoiceName" type="text" placeholder="Voice name (e.g. My Desk Mic)">
+          <button id="saveCurrentVoice" class="secondary" type="button">Save current sample</button>
+        </div>
+        <div class="row">
+          <select id="savedVoiceSelect">
+            <option value="">No saved voice selected</option>
+          </select>
+          <button id="refreshSavedVoices" class="secondary" type="button">Refresh</button>
+          <button id="deleteSavedVoice" class="danger" type="button">Delete selected</button>
+        </div>
+      </section>
+    </section>
+
+    <section class="pane">
+      <form id="generateForm" class="card">
+        <h2>2. Text to speak</h2>
+        <div class="row">
+          <div>
+            <label for="sourceLanguage" style="margin-top:0;">Source language</label>
+            <select id="sourceLanguage" name="source_language">
+              <option value="en" selected>English</option>
+              <option value="de">German</option>
+              <option value="zh">Chinese</option>
+              <option value="es">Spanish</option>
+            </select>
+          </div>
+          <div>
+            <label for="targetLanguage" style="margin-top:0;">Target voice language</label>
+            <select id="targetLanguage" name="target_language"></select>
+          </div>
+        </div>
+        <p id="languageHint" class="muted" style="margin:8px 0 0;">English → German</p>
+        <label for="text" id="textLabel">English text</label>
+        <textarea id="text" name="text" placeholder="Good morning, how are you?" required></textarea>
+        <label class="muted" style="margin-top:8px;display:flex;align-items:flex-start;gap:10px;font-weight:600;cursor:pointer;">
+          <input type="checkbox" id="skipTranslation" name="skip_translation" value="1" style="width:auto;margin-top:4px;">
+          <span>Text is already in target language (skip translation).</span>
+        </label>
+      </form>
+
+      <details class="card">
+        <summary>Reference transcript (optional)</summary>
+        <p class="muted" style="margin:6px 0 8px;">Paste the exact words from your reference clip for better timbre matching.</p>
+        <label for="refText">Transcript of reference audio</label>
+        <textarea id="refText" name="ref_text" rows="4" placeholder="Leave empty for embedding-only mode, or paste what you said…"></textarea>
+        <label class="muted" style="margin-top:10px;display:flex;align-items:flex-start;gap:10px;font-weight:600;cursor:pointer;">
+          <input type="checkbox" id="autoTranscribe" name="auto_transcribe" value="1" style="width:auto;margin-top:4px;">
+          <span>Auto-transcribe reference with Whisper (English).</span>
+        </label>
+        <label for="asrModel" style="margin-top:8px;">Whisper model</label>
+        <select id="asrModel" name="asr_model">
+          <option value="openai/whisper-tiny" selected>openai/whisper-tiny (default, fastest)</option>
+          <option value="openai/whisper-base">openai/whisper-base</option>
+          <option value="openai/whisper-small">openai/whisper-small</option>
         </select>
-        <button id="refreshSavedVoices" class="secondary" type="button">Refresh</button>
-        <button id="deleteSavedVoice" class="danger" type="button">Delete selected</button>
-      </div>
-      <p class="muted" style="margin:10px 0 0;">Tip: If a saved voice is selected and no new file is chosen, generation uses the saved voice.</p>
-    </div>
-  </section>
+      </details>
 
-  <form id="generateForm" class="card">
-    <h2>2. Reference transcript (optional)</h2>
-    <p class="muted">For <strong>better timbre match</strong>, paste the exact words you spoke in the reference recording (same language as the clip, often English if you used the script below).</p>
-    <label for="refText">Transcript of reference audio</label>
-    <textarea id="refText" name="ref_text" rows="4" placeholder="Leave empty for embedding-only mode, or paste what you said…"></textarea>
-    <label class="muted" style="margin-top:14px;display:flex;align-items:flex-start;gap:10px;font-weight:600;cursor:pointer;">
-      <input type="checkbox" id="autoTranscribe" name="auto_transcribe" value="1" style="width:auto;margin-top:4px;">
-      <span>Auto-transcribe reference with Whisper (English). Uses the first run to download the ASR model. Ignored if you filled the transcript above.</span>
-    </label>
-    <label for="asrModel" style="margin-top:10px;">Whisper model (for Auto-transcribe)</label>
-    <select id="asrModel" name="asr_model">
-      <option value="openai/whisper-tiny" selected>openai/whisper-tiny (default, fastest)</option>
-      <option value="openai/whisper-base">openai/whisper-base</option>
-      <option value="openai/whisper-small">openai/whisper-small</option>
-    </select>
-
-    <h2 style="margin-top:22px;">3. Text to speak</h2>
-    <div class="row">
       <div>
-        <label for="sourceLanguage" style="margin-top:0;">Source language</label>
-        <select id="sourceLanguage" name="source_language">
-          <option value="en" selected>English</option>
-          <option value="de">German</option>
-          <option value="zh">Chinese</option>
-          <option value="es">Spanish</option>
-        </select>
+        <button class="primary" type="submit" form="generateForm">Generate voice</button>
       </div>
-      <div>
-        <label for="targetLanguage" style="margin-top:0;">Target voice language</label>
-        <select id="targetLanguage" name="target_language"></select>
-      </div>
-    </div>
-    <p id="languageHint" class="muted" style="margin:10px 0 0;">English → German</p>
-    <label for="text" id="textLabel">English text</label>
-    <textarea id="text" name="text" placeholder="Good morning, how are you?" required></textarea>
-    <button class="primary" type="submit">Generate voice</button>
-  </form>
 
-  <section id="result" class="card hidden">
-    <h2>Result</h2>
-    <p><strong id="targetLanguageLabel">Generated text:</strong> <span id="generatedText"></span></p>
-    <audio id="voicePlayback" controls></audio>
-  </section>
+      <section id="result" class="card hidden">
+        <h2>Result</h2>
+        <p><strong id="targetLanguageLabel">Generated text:</strong> <span id="generatedText"></span></p>
+        <audio id="voicePlayback" controls></audio>
+      </section>
+    </section>
+  </div>
 
-  <p id="status" class="muted"></p>
+  <div class="action-bar">
+    <p id="status" class="muted"></p>
+  </div>
 </main>
 <script>
 let recorder;
@@ -148,6 +185,7 @@ let chunks = [];
 /** @type {null | {blob: Blob, filename: string}} */
 let voiceForSubmit = null;
 let uploadObjectUrl = null;
+let activeGeneratePoll = null;
 
 const recordButton = document.getElementById('record');
 const stopButton = document.getElementById('stop');
@@ -170,6 +208,7 @@ const targetLanguage = document.getElementById('targetLanguage');
 const languageHint = document.getElementById('languageHint');
 const textInput = document.getElementById('text');
 const textLabel = document.getElementById('textLabel');
+const skipTranslation = document.getElementById('skipTranslation');
 
 const languageNames = {
   en: 'English',
@@ -210,7 +249,23 @@ function updateLanguageSelectors() {
   const copy = sourceCopy[source] || sourceCopy.en;
   textLabel.textContent = copy[0];
   textInput.placeholder = copy[1];
+  updateLanguageHintAndInputText();
+}
+
+function updateLanguageHintAndInputText() {
+  const source = sourceLanguage.value;
   const target = targetLanguage.value;
+  const shouldSkipTranslation = !!(skipTranslation && skipTranslation.checked);
+  if (shouldSkipTranslation) {
+    languageHint.textContent = 'Direct ' + languageNames[target] + ' text mode (no translation)';
+    textLabel.textContent = languageNames[target] + ' text';
+    const targetCopy = sourceCopy[target] || sourceCopy.en;
+    textInput.placeholder = targetCopy[1];
+    return;
+  }
+  const copy = sourceCopy[source] || sourceCopy.en;
+  textLabel.textContent = copy[0];
+  textInput.placeholder = copy[1];
   languageHint.textContent =
     source === target
       ? languageNames[target] + ' direct (no translation)'
@@ -228,6 +283,13 @@ function setSavedVoiceOptions(items) {
     option.value = item.id;
     option.textContent = item.name;
     savedVoiceSelect.appendChild(option);
+  }
+}
+
+function stopGeneratePolling() {
+  if (activeGeneratePoll) {
+    clearInterval(activeGeneratePoll);
+    activeGeneratePoll = null;
   }
 }
 
@@ -376,6 +438,7 @@ deleteSavedVoiceBtn.addEventListener('click', async () => {
 
 form.addEventListener('submit', async event => {
   event.preventDefault();
+  stopGeneratePolling();
   const savedVoiceId = savedVoiceSelect.value;
   if (!voiceForSubmit && !savedVoiceId) {
     statusEl.textContent = 'Record/upload a voice, or select a saved voice first.';
@@ -387,6 +450,9 @@ form.addEventListener('submit', async event => {
   data.append('source_language', sourceLanguage.value);
   data.append('target_language', targetLanguage.value);
   data.append('language_flow', sourceLanguage.value + '-' + targetLanguage.value);
+  if (skipTranslation && skipTranslation.checked) {
+    data.append('skip_translation', '1');
+  }
   if (voiceForSubmit) {
     data.append('voice', voiceForSubmit.blob, voiceForSubmit.filename);
   } else if (savedVoiceId) {
@@ -404,7 +470,7 @@ form.addEventListener('submit', async event => {
     }
   }
 
-  const isDirect = sourceLanguage.value === targetLanguage.value;
+  const isDirect = sourceLanguage.value === targetLanguage.value || (skipTranslation && skipTranslation.checked);
   statusEl.textContent =
     isDirect
       ? 'Generating audio directly. First run can take several minutes while models download...'
@@ -415,12 +481,37 @@ form.addEventListener('submit', async event => {
     const response = await fetch('/generate', { method: 'POST', body: data });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Generation failed');
-    targetLanguageLabel.textContent = (payload.target_language_name || 'Generated') + ':';
-    generatedText.textContent = payload.target_text;
-    voicePlayback.src = payload.audio_url + '?t=' + Date.now();
-    result.classList.remove('hidden');
-    statusEl.textContent = 'Done.';
+    if (!payload.job_id) throw new Error('Generation job was not created.');
+
+    const pollStatus = async () => {
+      try {
+        const statusResponse = await fetch('/generate-status/' + encodeURIComponent(payload.job_id));
+        const statusPayload = await statusResponse.json();
+        if (!statusResponse.ok) throw new Error(statusPayload.error || 'Failed to load generation status');
+        if (statusPayload.status_message) statusEl.textContent = statusPayload.status_message;
+
+        if (statusPayload.status === 'done') {
+          stopGeneratePolling();
+          targetLanguageLabel.textContent = (statusPayload.target_language_name || 'Generated') + ':';
+          generatedText.textContent = statusPayload.target_text || '';
+          voicePlayback.src = statusPayload.audio_url + '?t=' + Date.now();
+          result.classList.remove('hidden');
+        } else if (statusPayload.status === 'error') {
+          stopGeneratePolling();
+          throw new Error(statusPayload.error || 'Generation failed');
+        }
+      } catch (error) {
+        stopGeneratePolling();
+        statusEl.textContent = error.message;
+      }
+    };
+
+    await pollStatus();
+    if (!activeGeneratePoll) {
+      activeGeneratePoll = setInterval(pollStatus, 1000);
+    }
   } catch (error) {
+    stopGeneratePolling();
     statusEl.textContent = error.message;
   }
 });
@@ -428,6 +519,7 @@ form.addEventListener('submit', async event => {
 loadSavedVoices();
 sourceLanguage.addEventListener('change', updateLanguageSelectors);
 targetLanguage.addEventListener('change', updateLanguageSelectors);
+skipTranslation.addEventListener('change', updateLanguageHintAndInputText);
 updateLanguageSelectors();
 </script>
 </body>
@@ -452,6 +544,8 @@ def create_app(
     if not saved_index_path.exists():
         saved_index_path.write_text("[]", encoding="utf-8")
     counter = itertools.count(1)
+    jobs_lock = threading.Lock()
+    jobs: dict[str, dict[str, Any]] = {}
 
     def load_saved_index() -> list[dict[str, str]]:
         try:
@@ -508,6 +602,12 @@ def create_app(
         text = request.form.get("text", "").strip()
         voice = request.files.get("voice")
         saved_voice_id = request.form.get("saved_voice_id", "").strip()
+        skip_translation = request.form.get("skip_translation", "").lower() in (
+            "1",
+            "on",
+            "true",
+            "yes",
+        )
 
         try:
             source_language, target_language, flow_label = resolve_language_flow()
@@ -536,30 +636,79 @@ def create_app(
         auto_tc = request.form.get("auto_transcribe", "").lower() in ("1", "on", "true", "yes")
         asr_model = request.form.get("asr_model", "").strip() or None
 
-        try:
-            target_text = text if source_language == target_language else translator(text, source_language, target_language)
-            synthesizer(
-                target_text,
-                speaker_file,
-                output_file,
-                language=language_name(target_language),
-                ref_text=ref_text_raw,
-                auto_transcribe_reference=auto_tc,
-                asr_model=asr_model,
-            )
-        except Exception as exc:  # noqa: BLE001 - display error to local user
-            return jsonify(error=str(exc)), 500
+        job_id = uuid4().hex
+        with jobs_lock:
+            jobs[job_id] = {
+                "status": "queued",
+                "status_message": "Queued...",
+                "source_text": text,
+                "source_language": source_language,
+                "target_language": target_language,
+                "source_language_name": language_name(source_language),
+                "target_language_name": language_name(target_language),
+                "language_flow": flow_label,
+                "audio_url": f"/outputs/{output_file.name}",
+            }
 
-        return jsonify(
-            source_text=text,
-            target_text=target_text,
-            source_language=source_language,
-            target_language=target_language,
-            source_language_name=language_name(source_language),
-            target_language_name=language_name(target_language),
-            language_flow=flow_label,
-            audio_url=f"/outputs/{output_file.name}",
-        )
+        def update_job(**updates: Any) -> None:
+            with jobs_lock:
+                if job_id in jobs:
+                    jobs[job_id].update(updates)
+
+        def run_job() -> None:
+            try:
+                if skip_translation or source_language == target_language:
+                    update_job(
+                        status="generating",
+                        status_message=(
+                            "Using provided target-language text. Generating voice..."
+                            if skip_translation and source_language != target_language
+                            else "Generating voice..."
+                        ),
+                    )
+                    target_text = text
+                else:
+                    update_job(
+                        status="translating",
+                        status_message=f"Translating {language_name(source_language)} to {language_name(target_language)}...",
+                    )
+                    target_text = translator(text, source_language, target_language)
+                    update_job(
+                        status="generating",
+                        status_message="Generating voice...",
+                    )
+
+                synthesizer(
+                    target_text,
+                    speaker_file,
+                    output_file,
+                    language=language_name(target_language),
+                    ref_text=ref_text_raw,
+                    auto_transcribe_reference=auto_tc,
+                    asr_model=asr_model,
+                )
+                update_job(
+                    status="done",
+                    status_message="Done.",
+                    target_text=target_text,
+                )
+            except Exception as exc:  # noqa: BLE001 - display error to local user
+                update_job(
+                    status="error",
+                    status_message=str(exc),
+                    error=str(exc),
+                )
+
+        threading.Thread(target=run_job, daemon=True).start()
+        return jsonify(job_id=job_id, status="queued")
+
+    @app.get("/generate-status/<job_id>")
+    def generate_status(job_id: str):
+        with jobs_lock:
+            payload = jobs.get(job_id)
+        if payload is None:
+            return jsonify(error="Generation job was not found."), 404
+        return jsonify(payload)
 
     @app.get("/saved-voices")
     def list_saved_voices():
