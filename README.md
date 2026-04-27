@@ -145,6 +145,8 @@ Windows (`.msi` + `.exe`/NSIS):
 ```
 
 If `cargo metadata` fails with `program not found`, Rust is missing. The Windows script now auto-installs Rust via `rustup` when needed; on Linux, install Rust first (`rustup`) before running the desktop build script.
+If Windows fails with `link.exe not found`, install Visual Studio Build Tools (C++ workload):
+`winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools"`.
 
 Installer outputs are under:
 

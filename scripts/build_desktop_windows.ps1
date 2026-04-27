@@ -2,6 +2,22 @@ $ErrorActionPreference = "Stop"
 
 $RootDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 
+function Get-VsDevCmdPath {
+  $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+  if (-not (Test-Path $vswhere)) {
+    return $null
+  }
+  $installPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+  if (-not $installPath) {
+    return $null
+  }
+  $candidate = Join-Path $installPath "Common7\Tools\VsDevCmd.bat"
+  if (Test-Path $candidate) {
+    return $candidate
+  }
+  return $null
+}
+
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
   Write-Host "cargo not found. Installing Rust toolchain with rustup..."
   $RustupInstaller = Join-Path $env:TEMP "rustup-init.exe"
@@ -17,11 +33,24 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
   throw "cargo still not found after installation. Open a new shell (or add %USERPROFILE%\\.cargo\\bin to PATH) and retry."
 }
 
+$vsDevCmd = Get-VsDevCmdPath
+if (-not $vsDevCmd) {
+  throw @"
+MSVC linker (link.exe) is not available.
+Install Visual Studio Build Tools with C++ tools, then rerun:
+  winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools"
+"@
+}
+
 & "$RootDir/scripts/build_backend_dist.ps1"
 
 Push-Location "$RootDir/desktop"
 npm install
-npm run tauri:build
+$escapedVsDevCmd = $vsDevCmd -replace '"', '""'
+cmd /c "`"$escapedVsDevCmd`" -arch=x64 -host_arch=x64 && npm run tauri:build"
+if ($LASTEXITCODE -ne 0) {
+  throw "tauri build failed (exit code $LASTEXITCODE)."
+}
 Pop-Location
 
 Write-Host "Windows desktop bundles created under desktop/src-tauri/target/release/bundle"
