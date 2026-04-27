@@ -7,14 +7,23 @@ function Get-VsDevCmdPath {
   if (-not (Test-Path $vswhere)) {
     return $null
   }
-  $installPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-  if (-not $installPath) {
-    return $null
+  $installCandidates = @(
+    (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath),
+    (& $vswhere -latest -products * -property installationPath)
+  ) | Where-Object { $_ -and $_.Trim() -ne "" } | Select-Object -Unique
+
+  foreach ($installPath in $installCandidates) {
+    $vsDevCmd = Join-Path $installPath "Common7\Tools\VsDevCmd.bat"
+    if (Test-Path $vsDevCmd) {
+      return $vsDevCmd
+    }
+
+    $vcVars64 = Join-Path $installPath "VC\Auxiliary\Build\vcvars64.bat"
+    if (Test-Path $vcVars64) {
+      return $vcVars64
+    }
   }
-  $candidate = Join-Path $installPath "Common7\Tools\VsDevCmd.bat"
-  if (Test-Path $candidate) {
-    return $candidate
-  }
+
   return $null
 }
 
@@ -47,7 +56,11 @@ Install Visual Studio Build Tools with C++ tools, then rerun:
 Push-Location "$RootDir/desktop"
 npm install
 $escapedVsDevCmd = $vsDevCmd -replace '"', '""'
-cmd /c "`"$escapedVsDevCmd`" -arch=x64 -host_arch=x64 && npm run tauri:build"
+if ($vsDevCmd -like "*VsDevCmd.bat") {
+  cmd /c "`"$escapedVsDevCmd`" -arch=x64 -host_arch=x64 && where link && npm run tauri:build"
+} else {
+  cmd /c "`"$escapedVsDevCmd`" && where link && npm run tauri:build"
+}
 if ($LASTEXITCODE -ne 0) {
   throw "tauri build failed (exit code $LASTEXITCODE)."
 }
