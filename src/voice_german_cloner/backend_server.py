@@ -3,7 +3,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .web import run_web_server
+try:
+    from voice_german_cloner.web import run_web_server
+except ImportError:  # pragma: no cover - fallback for direct package execution modes
+    from .web import run_web_server
 
 
 def build_parser() -> argparse.ArgumentParser:
