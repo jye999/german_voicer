@@ -144,6 +144,8 @@ Windows (`.msi` + `.exe`/NSIS):
 ./scripts/build_desktop_windows.ps1
 ```
 
+If `cargo metadata` fails with `program not found`, Rust is missing. The Windows script now auto-installs Rust via `rustup` when needed; on Linux, install Rust first (`rustup`) before running the desktop build script.
+
 Installer outputs are under:
 
 `desktop/src-tauri/target/release/bundle/`
